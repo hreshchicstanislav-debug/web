@@ -1,0 +1,21 @@
+# Временные файлы
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Конфиденциальные данные
+пароль.txt
+*password*.txt
+*secret*.txt
+
+# Node modules (если будете использовать)
+node_modules/
+package-lock.json
+
+# Служебные файлы
+*.swp
+*.swo
+*~
+

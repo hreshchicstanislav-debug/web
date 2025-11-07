@@ -1,0 +1,25 @@
+{
+  "name": "TimeTrack - Учет рабочего времени",
+  "short_name": "TimeTrack",
+  "description": "Приложение для учета рабочего времени",
+  "start_url": "/#/me",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2196F3",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
