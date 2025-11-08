@@ -397,6 +397,7 @@ async function renderMe(){
         <label>Факт прихода</label>
         <div class="time-wrapper">
         <input id="inTime" type="time" placeholder="--:--">
+          <button id="inTimeConfirm" class="time-confirm-btn" style="display: none;" title="Подтвердить время">✓</button>
           <span id="inTimeCheck" class="checkmark">✓</span>
         </div>
       </div>
@@ -404,6 +405,7 @@ async function renderMe(){
         <label>Факт ухода</label>
         <div class="time-wrapper">
         <input id="outTime" type="time" placeholder="--:--">
+          <button id="outTimeConfirm" class="time-confirm-btn" style="display: none;" title="Подтвердить время">✓</button>
           <span id="outTimeCheck" class="checkmark">✓</span>
         </div>
       </div>
@@ -449,48 +451,70 @@ async function renderMe(){
   });
 
   // handlers
-  // Для полей времени сохраняем предыдущее значение, чтобы не сохранять при простом открытии picker на мобильных
-  // Используем window для сохранения значений между вызовами hydrateMe
-  if (typeof window.previousInTime === 'undefined') {
-    window.previousInTime = $('#inTime').value || '';
-  }
-  if (typeof window.previousOutTime === 'undefined') {
-    window.previousOutTime = $('#outTime').value || '';
-  }
+  // Для полей времени используем кнопку подтверждения вместо автоматического сохранения
+  // Это решает проблему на мобильных устройствах, где time picker может сразу закрываться
   
+  // Показываем кнопку подтверждения при изменении времени
   $('#inTime').addEventListener('change', (e) => {
     const newValue = e.target.value || '';
-    // Сохраняем только если значение реально изменилось
-    if (newValue !== window.previousInTime) {
-      window.previousInTime = newValue;
-      saveField('in_time', newValue);
+    // Показываем кнопку подтверждения, если есть значение и оно отличается от сохраненного
+    if (newValue && newValue !== window.previousInTime) {
+      $('#inTimeConfirm').style.display = 'inline-flex';
+    } else {
+      $('#inTimeConfirm').style.display = 'none';
     }
   });
   
-  $('#inTime').addEventListener('blur', (e) => {
+  $('#inTime').addEventListener('input', (e) => {
     const newValue = e.target.value || '';
-    // При потере фокуса также проверяем изменение
-    if (newValue !== window.previousInTime) {
-      window.previousInTime = newValue;
-      saveField('in_time', newValue);
+    // Показываем кнопку подтверждения при вводе
+    if (newValue && newValue !== window.previousInTime) {
+      $('#inTimeConfirm').style.display = 'inline-flex';
+    } else {
+      $('#inTimeConfirm').style.display = 'none';
     }
   });
   
+  // Кнопка подтверждения для факта прихода
+  $('#inTimeConfirm').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const newValue = $('#inTime').value || '';
+    if (newValue) {
+      window.previousInTime = newValue;
+      $('#inTimeConfirm').style.display = 'none';
+      await saveField('in_time', newValue);
+    }
+  });
+  
+  // Показываем кнопку подтверждения при изменении времени
   $('#outTime').addEventListener('change', (e) => {
     const newValue = e.target.value || '';
-    // Сохраняем только если значение реально изменилось
-    if (newValue !== window.previousOutTime) {
-      window.previousOutTime = newValue;
-      saveField('out_time', newValue);
+    // Показываем кнопку подтверждения, если есть значение и оно отличается от сохраненного
+    if (newValue && newValue !== window.previousOutTime) {
+      $('#outTimeConfirm').style.display = 'inline-flex';
+    } else {
+      $('#outTimeConfirm').style.display = 'none';
     }
   });
   
-  $('#outTime').addEventListener('blur', (e) => {
+  $('#outTime').addEventListener('input', (e) => {
     const newValue = e.target.value || '';
-    // При потере фокуса также проверяем изменение
-    if (newValue !== window.previousOutTime) {
+    // Показываем кнопку подтверждения при вводе
+    if (newValue && newValue !== window.previousOutTime) {
+      $('#outTimeConfirm').style.display = 'inline-flex';
+    } else {
+      $('#outTimeConfirm').style.display = 'none';
+    }
+  });
+  
+  // Кнопка подтверждения для факта ухода
+  $('#outTimeConfirm').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const newValue = $('#outTime').value || '';
+    if (newValue) {
       window.previousOutTime = newValue;
-      saveField('out_time', newValue);
+      $('#outTimeConfirm').style.display = 'none';
+      await saveField('out_time', newValue);
     }
   });
   
@@ -548,6 +572,16 @@ async function hydrateMe(rec){
   // show checkmarks if times are saved
   $('#inTimeCheck').classList.toggle('visible', !!rec.in_time);
   $('#outTimeCheck').classList.toggle('visible', !!rec.out_time);
+  
+  // Скрываем кнопки подтверждения при загрузке данных
+  const inTimeConfirm = $('#inTimeConfirm');
+  const outTimeConfirm = $('#outTimeConfirm');
+  if (inTimeConfirm) {
+    inTimeConfirm.style.display = 'none';
+  }
+  if (outTimeConfirm) {
+    outTimeConfirm.style.display = 'none';
+  }
   
   // Логирование для отладки
   console.log('hydrateMe для даты:', rec.date);
@@ -808,6 +842,7 @@ async function openBreakModal(){
       <label style="display: block; margin-bottom: 8px;">Ушёл</label>
       <div class="time-wrapper">
         <input id="bFrom" type="time" value="${savedFrom}" style="flex: 1;">
+        <button id="bFromConfirm" class="time-confirm-btn" style="display: none;" title="Подтвердить время">✓</button>
         <span id="bFromCheck" class="checkmark ${savedFrom ? 'visible' : ''}">✓</span>
       </div>
     </div>
@@ -815,6 +850,7 @@ async function openBreakModal(){
       <label style="display: block; margin-bottom: 8px;">Вернулся</label>
       <div class="time-wrapper">
         <input id="bTo" type="time" style="flex: 1;">
+        <button id="bToConfirm" class="time-confirm-btn" style="display: none;" title="Подтвердить время">✓</button>
         <span id="bToCheck" class="checkmark">✓</span>
       </div>
     </div>
@@ -831,47 +867,90 @@ async function openBreakModal(){
   // Открываем модальное окно с HTML
   openModalHTML('Отлучка', modalHTML);
   
-  // Автосохранение при выборе времени "Ушёл" - сохраняем частичную отлучку
-  $('#bFrom').addEventListener('change', async (e) => {
-    const from = e.target.value;
-    if (from) {
-      $('#bFromCheck').classList.add('visible');
-      // Сохраняем частичную отлучку (только from)
-      await savePartialBreak(from, $('#bReason').value);
+  // Сохраняем предыдущие значения для проверки изменений
+  let previousBFrom = savedFrom || '';
+  let previousBTo = '';
+  
+  // Показываем кнопку подтверждения при изменении времени "Ушёл"
+  $('#bFrom').addEventListener('change', (e) => {
+    const newValue = e.target.value || '';
+    if (newValue && newValue !== previousBFrom) {
+      $('#bFromConfirm').style.display = 'inline-flex';
     } else {
-      $('#bFromCheck').classList.remove('visible');
-      // Удаляем незавершенную отлучку если очистили поле
-      await removeIncompleteBreak();
+      $('#bFromConfirm').style.display = 'none';
     }
   });
   
-  // Автосохранение при выборе времени "Вернулся" - завершаем отлучку
-  $('#bTo').addEventListener('change', async (e) => {
-    const to = e.target.value;
-    if (to) {
-      $('#bToCheck').classList.add('visible');
-      const from = $('#bFrom').value;
-      if (from) {
-        // Завершаем отлучку - сохраняем полную
-        await completeBreak(from, to, $('#bReason').value);
-        // Очищаем поля после сохранения
-        $('#bFrom').value = '';
-        $('#bTo').value = '';
-        $('#bReason').value = '';
-        $('#bFromCheck').classList.remove('visible');
-        $('#bToCheck').classList.remove('visible');
-      }
+  $('#bFrom').addEventListener('input', (e) => {
+    const newValue = e.target.value || '';
+    if (newValue && newValue !== previousBFrom) {
+      $('#bFromConfirm').style.display = 'inline-flex';
     } else {
+      $('#bFromConfirm').style.display = 'none';
+    }
+  });
+  
+  // Кнопка подтверждения для времени "Ушёл"
+  $('#bFromConfirm').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const from = $('#bFrom').value || '';
+    if (from) {
+      previousBFrom = from;
+      $('#bFromConfirm').style.display = 'none';
+      $('#bFromCheck').classList.add('visible');
+      // Сохраняем частичную отлучку (только from)
+      await savePartialBreak(from, $('#bReason').value);
+    }
+  });
+  
+  // Показываем кнопку подтверждения при изменении времени "Вернулся"
+  $('#bTo').addEventListener('change', (e) => {
+    const newValue = e.target.value || '';
+    if (newValue && newValue !== previousBTo) {
+      $('#bToConfirm').style.display = 'inline-flex';
+    } else {
+      $('#bToConfirm').style.display = 'none';
+    }
+  });
+  
+  $('#bTo').addEventListener('input', (e) => {
+    const newValue = e.target.value || '';
+    if (newValue && newValue !== previousBTo) {
+      $('#bToConfirm').style.display = 'inline-flex';
+    } else {
+      $('#bToConfirm').style.display = 'none';
+    }
+  });
+  
+  // Кнопка подтверждения для времени "Вернулся"
+  $('#bToConfirm').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const to = $('#bTo').value || '';
+    const from = $('#bFrom').value || '';
+    if (to && from) {
+      previousBTo = to;
+      $('#bToConfirm').style.display = 'none';
+      $('#bToCheck').classList.add('visible');
+      // Завершаем отлучку - сохраняем полную
+      await completeBreak(from, to, $('#bReason').value);
+      // Очищаем поля после сохранения
+      $('#bFrom').value = '';
+      $('#bTo').value = '';
+      $('#bReason').value = '';
+      $('#bFromCheck').classList.remove('visible');
       $('#bToCheck').classList.remove('visible');
+      previousBFrom = '';
+      previousBTo = '';
     }
   });
   
   // Обновление причины при изменении выпадающего списка
+  // Если уже выбрано время "Ушёл", обновляем причину в частичной отлучке
   $('#bReason').addEventListener('change', async (e) => {
     const reason = e.target.value;
     const from = $('#bFrom').value;
-    if (from) {
-      // Если уже выбрано время "Ушёл", обновляем причину в частичной отлучке
+    if (from && $('#bFromCheck').classList.contains('visible')) {
+      // Если время "Ушёл" уже подтверждено, обновляем причину
       await savePartialBreak(from, reason);
     }
   });
