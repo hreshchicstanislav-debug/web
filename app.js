@@ -666,7 +666,10 @@ async function recalculateBalance(){
   // Фактически отработано в минутах
   // ВАЖНО: Баланс рассчитывается ТОЛЬКО если есть и in_time, и out_time
   let actualMinutes = 0;
+  let dayDelta = 0;
+  
   if (rec.in_time && rec.out_time) {
+    // Есть полные данные - рассчитываем баланс
     // Время присутствия на работе
     const presenceMinutes = toMinutes(rec.out_time) - toMinutes(rec.in_time);
     
@@ -686,20 +689,15 @@ async function recalculateBalance(){
     
     // Фактически отработано = время присутствия - отлучки
     actualMinutes = presenceMinutes - breaksMin;
+    
+    // Баланс дня = фактически отработано - план
+    dayDelta = actualMinutes - planMinutes;
   } else {
-    // Если нет полных данных (нет in_time или out_time), баланс не рассчитываем
-    // Используем сохраненное значение day_balance_min, если оно есть
-    if (rec.day_balance_min !== undefined && rec.day_balance_min !== null) {
-      actualMinutes = rec.day_balance_min + planMinutes;
-    } else {
-      // Если нет сохраненного значения, баланс = 0
-      actualMinutes = planMinutes;
-    }
+    // Если нет полных данных (нет in_time или out_time) - день не считается рабочим
+    // day_balance_min = 0 (не начисляем минус за нерабочий день)
+    dayDelta = 0;
   }
-  
-  // Баланс дня = фактически отработано - план
-  // Если нет полных данных, dayDelta остается 0 (не пересчитываем)
-  const dayDelta = (rec.in_time && rec.out_time) ? (actualMinutes - planMinutes) : (rec.day_balance_min || 0);
+  // Новый остаток = остаток с прошлого дня + баланс текущего дня
   const carryNew = carryPrev + dayDelta;
   
   console.log('Баланс дня (dayDelta):', dayDelta, 'минут =', mmToHhmm(dayDelta));
