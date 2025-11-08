@@ -57,9 +57,42 @@ SET
   END,
   updated_at = NOW();
 
--- ШАГ 3: Пересчитываем carry_new_min через оконную функцию
--- carry_new_min(первая строка) = day_balance_min(первая строка)
--- carry_new_min(каждая следующая) = предыдущий carry_new_min + текущий day_balance_min
+-- ШАГ 3: Упрощенный вариант пересчета (без рекурсии, через оконные функции)
+-- Этот вариант проще и работает быстрее
+
+-- Сначала обновляем day_balance_min для всех записей
+UPDATE time_tracks
+SET 
+  day_balance_min = CASE 
+    WHEN in_time IS NULL OR out_time IS NULL THEN 0
+    ELSE (
+      -- Время присутствия в минутах
+      (EXTRACT(EPOCH FROM (out_time::time - in_time::time)) / 60)::integer
+      -- Вычитаем отлучки (если есть)
+      - COALESCE((
+        SELECT SUM(
+          (EXTRACT(EPOCH FROM (
+            ((break->>'to')::time) - ((break->>'from')::time)
+          )) / 60)::integer
+        )
+        FROM jsonb_array_elements(
+          CASE 
+            WHEN breaks_json IS NULL OR breaks_json = '' THEN '[]'::jsonb
+            ELSE breaks_json::jsonb
+          END
+        ) AS break
+        WHERE break->>'to' IS NOT NULL 
+          AND break->>'from' IS NOT NULL
+          AND (break->>'to')::time IS NOT NULL
+          AND (break->>'from')::time IS NOT NULL
+      ), 0)
+      -- Вычитаем план (540 минут = 9 часов)
+      - 540
+    )
+  END,
+  updated_at = NOW();
+
+-- Затем пересчитываем carry_new_min через оконную функцию
 WITH ordered_records AS (
   SELECT 
     date,

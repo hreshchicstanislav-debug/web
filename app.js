@@ -449,8 +449,51 @@ async function renderMe(){
   });
 
   // handlers
-  $('#inTime').addEventListener('change', e => saveField('in_time', e.target.value));
-  $('#outTime').addEventListener('change', e => saveField('out_time', e.target.value));
+  // Для полей времени сохраняем предыдущее значение, чтобы не сохранять при простом открытии picker на мобильных
+  // Используем window для сохранения значений между вызовами hydrateMe
+  if (typeof window.previousInTime === 'undefined') {
+    window.previousInTime = $('#inTime').value || '';
+  }
+  if (typeof window.previousOutTime === 'undefined') {
+    window.previousOutTime = $('#outTime').value || '';
+  }
+  
+  $('#inTime').addEventListener('change', (e) => {
+    const newValue = e.target.value || '';
+    // Сохраняем только если значение реально изменилось
+    if (newValue !== window.previousInTime) {
+      window.previousInTime = newValue;
+      saveField('in_time', newValue);
+    }
+  });
+  
+  $('#inTime').addEventListener('blur', (e) => {
+    const newValue = e.target.value || '';
+    // При потере фокуса также проверяем изменение
+    if (newValue !== window.previousInTime) {
+      window.previousInTime = newValue;
+      saveField('in_time', newValue);
+    }
+  });
+  
+  $('#outTime').addEventListener('change', (e) => {
+    const newValue = e.target.value || '';
+    // Сохраняем только если значение реально изменилось
+    if (newValue !== window.previousOutTime) {
+      window.previousOutTime = newValue;
+      saveField('out_time', newValue);
+    }
+  });
+  
+  $('#outTime').addEventListener('blur', (e) => {
+    const newValue = e.target.value || '';
+    // При потере фокуса также проверяем изменение
+    if (newValue !== window.previousOutTime) {
+      window.previousOutTime = newValue;
+      saveField('out_time', newValue);
+    }
+  });
+  
   $('#comment').addEventListener('blur',  e => saveField('comment', e.target.value));
   $('#addBreak').addEventListener('click', openBreakModal);
   $('#addPhoto').addEventListener('click', openPhotoModal);
@@ -462,6 +505,12 @@ async function hydrateMe(rec){
   $('#inTime').value    = rec.in_time    || '';
   $('#outTime').value   = rec.out_time   || '';
   $('#comment').value   = rec.comment    || '';
+  
+  // Обновляем сохраненные предыдущие значения для проверки изменений
+  // Это нужно для предотвращения ложных срабатываний на мобильных устройствах
+  // когда просто открывается time picker без реального выбора времени
+  window.previousInTime = rec.in_time || '';
+  window.previousOutTime = rec.out_time || '';
 
   // Блокируем поля после сохранения (если есть значение)
   // Факт прихода блокируется после сохранения
