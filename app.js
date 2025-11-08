@@ -1265,7 +1265,7 @@ async function updateDayInMonthList(date, updatedRec) {
               src="${updatedRec.photo_url}" 
               alt="Фото сдачи ключей" 
               loading="lazy"
-              style="max-width: 200px; max-height: 150px; border-radius: 8px; cursor: pointer; display: block; margin: 12px auto; border: 1px solid #ddd; transition: transform 0.2s; object-fit: contain; width: auto; height: auto;"
+              style="max-width: 200px !important; max-height: 150px !important; width: auto !important; height: auto !important; border-radius: 8px; cursor: pointer; display: block; margin: 12px auto; border: 1px solid #ddd; transition: transform 0.2s; object-fit: contain !important; object-position: center; flex-shrink: 0;"
             >
           </div>
         </div>
@@ -1590,7 +1590,7 @@ async function renderBoss(){
                   src="${updatedRec.photo_url}" 
                   alt="Фото сдачи ключей" 
                   loading="lazy"
-                  style="max-width: 200px; max-height: 150px; border-radius: 8px; cursor: pointer; display: block; margin: 12px auto; border: 1px solid #ddd; transition: transform 0.2s; object-fit: contain; width: auto; height: auto;"
+                  style="max-width: 200px !important; max-height: 150px !important; width: auto !important; height: auto !important; border-radius: 8px; cursor: pointer; display: block; margin: 12px auto; border: 1px solid #ddd; transition: transform 0.2s; object-fit: contain !important; object-position: center; flex-shrink: 0;"
                 >
               </div>
             </div>
@@ -1796,6 +1796,16 @@ async function openReportModal(dateFormatted, reportText, photoUrl){
     img.alt = 'Фото сдачи ключей';
     img.loading = 'lazy';
     img.onclick = () => openLightbox(photoUrl);
+    // Устанавливаем строгие стили для сохранения пропорций (особенно важно для PWA на iPhone)
+    img.style.maxWidth = '200px';
+    img.style.maxHeight = '150px';
+    img.style.width = 'auto';
+    img.style.height = 'auto';
+    img.style.objectFit = 'contain';
+    img.style.objectPosition = 'center';
+    img.style.flexShrink = '0';
+    img.style.display = 'block';
+    img.style.margin = '12px auto';
     photoContent.innerHTML = '';
     photoContent.appendChild(img);
     
