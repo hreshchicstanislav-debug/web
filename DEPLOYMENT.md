@@ -91,8 +91,18 @@ git commit -m "Initial commit: TimeTrack PWA app"
 # Добавление удаленного репозитория (замените YOUR_USERNAME на ваш GitHub username)
 git remote add origin https://github.com/YOUR_USERNAME/timetrack.git
 
+# Проверка, что remote добавлен
+git remote -v
+
 # Загрузка на GitHub
 git branch -M main
+git push -u origin main
+```
+
+**Если репозиторий уже существует и вы получили ошибку**, используйте:
+
+```bash
+git remote set-url origin https://github.com/YOUR_USERNAME/timetrack.git
 git push -u origin main
 ```
 
@@ -101,12 +111,18 @@ git push -u origin main
 1. Откройте ваш репозиторий на GitHub
 2. Перейдите в **Settings** (Настройки)
 3. В левом меню найдите **Pages** (Страницы)
-4. В разделе **Source** (Источник):
-   - Выберите **Branch: main**
-   - Выберите папку **/ (root)**
+4. В разделе **Build and deployment** (Сборка и развертывание):
+   - **Source**: выберите **Deploy from a branch** (Развертывание из ветки)
+   - **Branch**: выберите **main** (или **master**)
+   - **Folder**: выберите **/ (root)** или оставьте пустым (если опции нет)
    - Нажмите **Save** (Сохранить)
 5. Подождите 1-2 минуты
 6. Ваш сайт будет доступен по адресу: `https://YOUR_USERNAME.github.io/timetrack/`
+
+**Примечание**: Если опции "/ (root)" нет в выпадающем списке:
+- Просто выберите ветку **main**
+- Поле **Folder** оставьте пустым
+- GitHub Pages автоматически найдет файлы в корне репозитория
 
 ### Шаг 4: Обновление путей (ВАЖНО!)
 

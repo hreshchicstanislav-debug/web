@@ -74,7 +74,7 @@
 
 ### iOS Simulator (только Mac):
 - Установите Xcode
-- Запустите iOS Simulator
+- Запустите OS Simulatoir
 - Откройте Safari в симуляторе
 - Введите `http://localhost:8000` или IP-адрес вашего Mac
 
