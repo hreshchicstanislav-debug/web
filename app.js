@@ -160,6 +160,8 @@ async function saveRecord(date, patch){
       updated_at: new Date().toISOString()
     };
     
+    let savedData = null;
+    
     if (existing) {
       // Обновляем существующую запись
       const { data, error } = await supabaseClient
@@ -174,7 +176,7 @@ async function saveRecord(date, patch){
         throw error;
       }
       
-      return data;
+      savedData = data;
     } else {
       // Создаем новую запись
       record.created_at = new Date().toISOString();
@@ -189,8 +191,20 @@ async function saveRecord(date, patch){
         throw error;
       }
       
-      return data;
+      savedData = data;
     }
+    
+    // ОПТИМИЗАЦИЯ: Обновляем кеш для месяца этой даты
+    const monthKey = date.slice(0, 7); // YYYY-MM
+    if (monthDataCache[monthKey]) {
+      monthDataCache[monthKey][date] = savedData;
+      console.log('Кеш обновлен для даты:', date);
+    }
+    
+    // ОПТИМИЗАЦИЯ: Обновляем день в списке, если он отображается
+    updateDayInMonthList(date, savedData);
+    
+    return savedData;
   } catch (e) {
     console.error('Ошибка сохранения записи:', e);
     throw e;
@@ -210,30 +224,35 @@ async function getPrevDayRecord(date){
       return null;
     }
     
+    // Убираем .single() чтобы избежать ошибки 406, когда записей нет
     const { data, error } = await supabaseClient
       .from(TABLE_NAME)
       .select('*')
       .lt('date', date)
       .order('date', { ascending: false })
-      .limit(1)
-      .single();
+      .limit(1);
     
-    if (error && error.code !== 'PGRST116') {
-      // PGRST116 - это нормальная ошибка "нет записей", её игнорируем
-      if (error.code !== 'PGRST116') {
+    if (error) {
+      // Ошибка 406 (Not Acceptable) - это нормально, когда записей нет
+      // PGRST116 - это тоже нормальная ошибка "нет записей"
+      // Игнорируем эти ошибки, так как это ожидаемое поведение
+      if (error.code !== 'PGRST116' && error.code !== '406' && error.message !== 'Not Acceptable') {
         console.error('Ошибка получения предыдущей записи:', error);
       }
+      // Возвращаем null, так как записей нет - это нормальная ситуация
       return null;
     }
     
     // Логирование для отладки
-    if (data) {
-      console.log('Найдена предыдущая запись для даты', date, ':', data.date, 'с carry_new_min:', data.carry_new_min);
+    if (data && data.length > 0) {
+      const prevRec = data[0];
+      console.log('Найдена предыдущая запись для даты', date, ':', prevRec.date, 'с carry_new_min:', prevRec.carry_new_min);
+      return prevRec;
     } else {
-      console.log('Предыдущая запись для даты', date, 'не найдена (это первая дата)');
+      // Нет записей - это нормально для первой даты в базе
+      // Не логируем это как ошибку, так как это ожидаемое поведение
+      return null;
     }
-    
-    return data || null;
   } catch (e) {
     console.error('Ошибка получения предыдущей записи:', e);
     return null;
@@ -444,9 +463,46 @@ async function hydrateMe(rec){
   $('#outTime').value   = rec.out_time   || '';
   $('#comment').value   = rec.comment    || '';
 
+  // Блокируем поля после сохранения (если есть значение)
+  // Факт прихода блокируется после сохранения
+  if (rec.in_time) {
+    $('#inTime').disabled = true;
+    $('#inTime').readOnly = true;
+    $('#inTime').classList.add('locked');
+  } else {
+    $('#inTime').disabled = false;
+    $('#inTime').readOnly = false;
+    $('#inTime').classList.remove('locked');
+  }
+
+  // Факт ухода блокируется после сохранения
+  if (rec.out_time) {
+    $('#outTime').disabled = true;
+    $('#outTime').readOnly = true;
+    $('#outTime').classList.add('locked');
+    // После выбора "факт ухода" блокируем добавление отлучек и фото
+    $('#addBreak').disabled = true;
+    $('#addBreak').classList.add('locked');
+    $('#addPhoto').disabled = true;
+    $('#addPhoto').classList.add('locked');
+  } else {
+    $('#outTime').disabled = false;
+    $('#outTime').readOnly = false;
+    $('#outTime').classList.remove('locked');
+    // Если "факт ухода" не выбран, можно добавлять отлучки и фото
+    $('#addBreak').disabled = false;
+    $('#addBreak').classList.remove('locked');
+    $('#addPhoto').disabled = false;
+    $('#addPhoto').classList.remove('locked');
+  }
+
   // show checkmarks if times are saved
   $('#inTimeCheck').classList.toggle('visible', !!rec.in_time);
   $('#outTimeCheck').classList.toggle('visible', !!rec.out_time);
+  
+  // Логирование для отладки
+  console.log('hydrateMe для даты:', rec.date);
+  console.log('in_time:', rec.in_time, 'out_time:', rec.out_time);
   
   // show photo checkmark and preview if photo exists
   if (rec.photo_url) {
@@ -462,7 +518,32 @@ async function hydrateMe(rec){
 
   // carry from previous day
   const prev = await getPrevDayRecord(rec.date);
-  const carryPrevMin = prev ? (prev.carry_new_min || 0) : 0;
+  
+  // Для первой записи (когда нет предыдущей) остаток на начало строго 0
+  let carryPrevMin = 0;
+  if (prev && prev.date) {
+    // Есть предыдущая запись - берем её carry_new_min
+    // Проверяем, что это действительно число
+    const prevCarry = prev.carry_new_min;
+    if (typeof prevCarry === 'number' && !isNaN(prevCarry)) {
+      // Проверяем, что это не timestamp (timestamp был бы очень большим числом)
+      // Если значение больше 100000 минут (примерно 70 дней), значит это ошибка
+      const MAX_REASONABLE_MINUTES = 100000;
+      const MIN_REASONABLE_MINUTES = -100000;
+      if (prevCarry > MAX_REASONABLE_MINUTES || prevCarry < MIN_REASONABLE_MINUTES) {
+        console.warn('Обнаружено некорректное значение carry_new_min:', prevCarry, 'для даты:', prev.date);
+        carryPrevMin = 0;
+      } else {
+        carryPrevMin = Math.round(prevCarry);
+      }
+    } else {
+      carryPrevMin = 0;
+    }
+  } else {
+    // Нет предыдущей записи - остаток с прошлого дня строго = 0
+    carryPrevMin = 0;
+  }
+  
   $('#carryPrevText').textContent = `Остаток с прошлого дня — "${mmToHhmm(carryPrevMin)}"`;
 
   // breaks list
@@ -491,14 +572,40 @@ async function saveField(field, val){
     if (field === 'in_time') {
       if (val) {
         $('#inTimeCheck').classList.add('visible');
+        // Блокируем поле после сохранения
+        $('#inTime').disabled = true;
+        $('#inTime').readOnly = true;
+        $('#inTime').classList.add('locked');
       } else {
         $('#inTimeCheck').classList.remove('visible');
+        // Разблокируем поле, если значение удалено
+        $('#inTime').disabled = false;
+        $('#inTime').readOnly = false;
+        $('#inTime').classList.remove('locked');
       }
     } else if (field === 'out_time') {
       if (val) {
         $('#outTimeCheck').classList.add('visible');
+        // Блокируем поле после сохранения
+        $('#outTime').disabled = true;
+        $('#outTime').readOnly = true;
+        $('#outTime').classList.add('locked');
+        // После выбора "факт ухода" блокируем добавление отлучек и фото
+        $('#addBreak').disabled = true;
+        $('#addBreak').classList.add('locked');
+        $('#addPhoto').disabled = true;
+        $('#addPhoto').classList.add('locked');
       } else {
         $('#outTimeCheck').classList.remove('visible');
+        // Разблокируем поле, если значение удалено
+        $('#outTime').disabled = false;
+        $('#outTime').readOnly = false;
+        $('#outTime').classList.remove('locked');
+        // Разблокируем добавление отлучек и фото
+        $('#addBreak').disabled = false;
+        $('#addBreak').classList.remove('locked');
+        $('#addPhoto').disabled = false;
+        $('#addPhoto').classList.remove('locked');
       }
     }
     
@@ -516,14 +623,31 @@ async function recalculateBalance(){
   const rec = await getRecord(currentDate);
   const prev = await getPrevDayRecord(currentDate);
   
-  // Для первой даты (когда нет предыдущей записи) остаток должен быть 0
+  // Для первой даты (когда нет предыдущей записи) остаток должен быть строго 0
   // Проверяем, что prev действительно null или undefined, а не объект с carry_new_min
   let carryPrev = 0;
   if (prev && prev.date) {
     // Есть предыдущая запись - берем её carry_new_min
-    carryPrev = prev.carry_new_min || 0;
+    // Важно: используем сохраненное значение из базы данных, не пересчитываем его
+    // Но проверяем, что это действительно число, а не что-то другое
+    const prevCarry = prev.carry_new_min;
+    if (typeof prevCarry === 'number' && !isNaN(prevCarry)) {
+      // Проверяем, что это не timestamp (timestamp был бы очень большим числом)
+      // Если значение больше 100000 минут (примерно 70 дней), значит это ошибка
+      const MAX_REASONABLE_MINUTES = 100000;
+      const MIN_REASONABLE_MINUTES = -100000;
+      if (prevCarry > MAX_REASONABLE_MINUTES || prevCarry < MIN_REASONABLE_MINUTES) {
+        console.warn('Обнаружено некорректное значение carry_new_min:', prevCarry, 'для даты:', prev.date);
+        carryPrev = 0;
+      } else {
+        carryPrev = Math.round(prevCarry);
+      }
+    } else {
+      carryPrev = 0;
+    }
   } else {
-    // Нет предыдущей записи - остаток с прошлого дня = 0
+    // Нет предыдущей записи - остаток с прошлого дня строго = 0
+    // Это гарантирует, что для первой записи остаток всегда будет 0
     carryPrev = 0;
   }
   
@@ -540,6 +664,7 @@ async function recalculateBalance(){
   const planMinutes = toMinutes(planEnd) - toMinutes(planStart);
   
   // Фактически отработано в минутах
+  // ВАЖНО: Баланс рассчитывается ТОЛЬКО если есть и in_time, и out_time
   let actualMinutes = 0;
   if (rec.in_time && rec.out_time) {
     // Время присутствия на работе
@@ -561,19 +686,39 @@ async function recalculateBalance(){
     
     // Фактически отработано = время присутствия - отлучки
     actualMinutes = presenceMinutes - breaksMin;
+  } else {
+    // Если нет полных данных (нет in_time или out_time), баланс не рассчитываем
+    // Используем сохраненное значение day_balance_min, если оно есть
+    if (rec.day_balance_min !== undefined && rec.day_balance_min !== null) {
+      actualMinutes = rec.day_balance_min + planMinutes;
+    } else {
+      // Если нет сохраненного значения, баланс = 0
+      actualMinutes = planMinutes;
+    }
   }
   
   // Баланс дня = фактически отработано - план
-  const dayDelta = actualMinutes - planMinutes;
+  // Если нет полных данных, dayDelta остается 0 (не пересчитываем)
+  const dayDelta = (rec.in_time && rec.out_time) ? (actualMinutes - planMinutes) : (rec.day_balance_min || 0);
   const carryNew = carryPrev + dayDelta;
   
   console.log('Баланс дня (dayDelta):', dayDelta, 'минут =', mmToHhmm(dayDelta));
   console.log('Новый остаток (carryNew):', carryNew, 'минут =', mmToHhmm(carryNew));
 
-  // Сохраняем рассчитанные значения
+  // Проверяем, что carryNew - это разумное значение (не timestamp)
+  // Если значение больше 100000 минут (примерно 70 дней), значит это ошибка
+  const MAX_REASONABLE_MINUTES = 100000; // ~70 дней
+  const MIN_REASONABLE_MINUTES = -100000; // ~-70 дней
+  const safeCarryNew = (carryNew > MAX_REASONABLE_MINUTES || carryNew < MIN_REASONABLE_MINUTES) 
+    ? 0 
+    : Math.round(carryNew);
+  
+  // Сохраняем рассчитанные значения ТОЛЬКО для текущего дня
+  // Это не вызывает цепную реакцию, так как пересчет последующих дней
+  // происходит только при их открытии и сохранении данных
   await saveRecord(currentDate, {
     day_balance_min: dayDelta,
-    carry_new_min: carryNew
+    carry_new_min: safeCarryNew
   });
 
   // Обновляем отображение остатка (только если элемент существует)
@@ -584,8 +729,14 @@ async function recalculateBalance(){
 }
 
 async function openBreakModal(){
-  // Получаем текущие отлучки
+  // Проверяем, не выбран ли уже "факт ухода"
   const rec = await getRecord(currentDate);
+  if (rec.out_time) {
+    alert('Нельзя добавить отлучку после выбора "факт ухода"');
+    return;
+  }
+  
+  // Получаем текущие отлучки
   let currentBreaks = [];
   if (rec.breaks_json) {
     try{ currentBreaks = JSON.parse(rec.breaks_json)||[]; } catch{}
@@ -758,13 +909,38 @@ async function openBreakModal(){
 }
 
 async function showReportForToday(){
-  // Пересчитываем баланс перед показом отчета
+  // Пересчитываем баланс перед показом отчета только для текущего дня
+  // Это безопасно, так как пересчет происходит только для одного дня
   await recalculateBalance();
   
   // Получаем обновленные данные после пересчета
   const rec = await getRecord(currentDate);
   const prev = await getPrevDayRecord(currentDate);
-  const carryPrev = prev ? (prev.carry_new_min || 0) : 0;
+  
+  // Для первой записи (когда нет предыдущей) остаток на начало строго 0
+  let carryPrev = 0;
+  if (prev && prev.date) {
+    // Есть предыдущая запись - берем её carry_new_min
+    // Проверяем, что это действительно число
+    const prevCarry = prev.carry_new_min;
+    if (typeof prevCarry === 'number' && !isNaN(prevCarry)) {
+      // Проверяем, что это не timestamp (timestamp был бы очень большим числом)
+      const MAX_REASONABLE_MINUTES = 100000;
+      const MIN_REASONABLE_MINUTES = -100000;
+      if (prevCarry > MAX_REASONABLE_MINUTES || prevCarry < MIN_REASONABLE_MINUTES) {
+        console.warn('Обнаружено некорректное значение carry_new_min:', prevCarry, 'для даты:', prev.date);
+        carryPrev = 0;
+      } else {
+        carryPrev = Math.round(prevCarry);
+      }
+    } else {
+      carryPrev = 0;
+    }
+  } else {
+    // Нет предыдущей записи - остаток с прошлого дня строго = 0
+    carryPrev = 0;
+  }
+  
   const carryPrevText = mmToHhmm(carryPrev);
   const rep = buildReport(rec, carryPrevText);
   const dateFormatted = formatDate(currentDate);
@@ -774,6 +950,13 @@ async function showReportForToday(){
 
 // Функция открытия модального окна для загрузки фото
 async function openPhotoModal(){
+  // Проверяем, не выбран ли уже "факт ухода"
+  const rec = await getRecord(currentDate);
+  if (rec.out_time) {
+    alert('Нельзя добавить фото после выбора "факт ухода"');
+    return;
+  }
+  
   const modalHTML = `
     <div style="margin-bottom: 16px;">
       <label style="display: block; margin-bottom: 8px;">Выберите фото (только одна фотография)</label>
@@ -993,7 +1176,155 @@ async function uploadPhotoToStorage(file) {
 }
 
 /***** BOSS SCREEN - Месячный календарь и список *****/
+// Кеш данных за месяцы для быстрой загрузки
+const monthDataCache = {};
+const monthDataCacheTime = {};
+
+// Функция для поиска предыдущей записи в уже загруженных данных
+function findPrevRecordInData(date, allData) {
+  // Сортируем все даты по убыванию
+  const sortedDates = Object.keys(allData).sort().reverse();
+  
+  // Находим первую дату, которая меньше текущей
+  for (const prevDate of sortedDates) {
+    if (prevDate < date) {
+      return allData[prevDate];
+    }
+  }
+  
+  return null;
+}
+
+// Функция для обновления только одного дня в списке (если он отображается)
+async function updateDayInMonthList(date, updatedRec) {
+  const monthListView = $('#monthListView');
+  if (!monthListView) return; // Список не отображается
+  
+  // Находим элемент дня по data-атрибуту
+  const dayElement = monthListView.querySelector(`[data-date="${date}"]`);
+  if (!dayElement) return; // День не найден в списке
+  
+  // Получаем все данные для расчета остатка с прошлого дня
+  const monthKey = date.slice(0, 7); // YYYY-MM
+  let allData = monthDataCache[monthKey];
+  
+  if (!allData) {
+    // Если данных нет в кеше, загружаем их
+    allData = await getAllRecords();
+    monthDataCache[monthKey] = allData;
+  }
+  
+  // Находим предыдущую запись
+  const prev = findPrevRecordInData(date, allData);
+  
+  // Рассчитываем остаток с прошлого дня
+  let carryPrev = 0;
+  if (prev && prev.date) {
+    const prevCarry = prev.carry_new_min;
+    if (typeof prevCarry === 'number' && !isNaN(prevCarry)) {
+      // Проверяем, что это не timestamp (timestamp был бы очень большим числом)
+      const MAX_REASONABLE_MINUTES = 100000;
+      const MIN_REASONABLE_MINUTES = -100000;
+      if (prevCarry > MAX_REASONABLE_MINUTES || prevCarry < MIN_REASONABLE_MINUTES) {
+        console.warn('Обнаружено некорректное значение carry_new_min:', prevCarry, 'для даты:', prev.date);
+        carryPrev = 0;
+      } else {
+        carryPrev = Math.round(prevCarry);
+      }
+    }
+  }
+  
+  // Формируем отчет
+  const report = buildReport(updatedRec, mmToHhmm(carryPrev));
+  
+  // Формируем содержимое дня
+  const dateObj = new Date(date);
+  const dayName = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][dateObj.getDay()];
+  let content = `<div class="day-header">${dayName} ${formatDate(date)}</div>`;
+  
+  if (updatedRec.in_time || updatedRec.out_time) {
+    const formattedReport = report.split('\n').map(line => {
+      if (line.trim() === '') return '<br>';
+      const escapedLine = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<div style="margin: 2px 0;">${escapedLine}</div>`;
+    }).join('');
+    content += `<div class="day-content" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.6; padding: 8px;">${formattedReport}</div>`;
+    
+    // Добавляем кнопку "Показать фото" если есть фото
+    if (updatedRec.photo_url) {
+      const photoId = `photo-${date.replace(/-/g, '')}`;
+      const photoContainerId = `photo-container-${date.replace(/-/g, '')}`;
+      const photoImgId = `photo-img-${date.replace(/-/g, '')}`;
+      content += `
+        <div style="margin-top: 12px;">
+          <button class="photo-toggle-btn" id="${photoId}" style="width: 100%;">Показать фото</button>
+          <div class="photo-container" id="${photoContainerId}" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out;">
+            <img 
+              id="${photoImgId}"
+              class="photo-thumbnail" 
+              src="${updatedRec.photo_url}" 
+              alt="Фото сдачи ключей" 
+              loading="lazy"
+              style="max-width: 200px; max-height: 150px; border-radius: 8px; cursor: pointer; display: block; margin: 12px auto; border: 1px solid #ddd; transition: transform 0.2s; object-fit: contain; width: auto; height: auto;"
+            >
+          </div>
+        </div>
+      `;
+    } else {
+      const photoId = `photo-${date.replace(/-/g, '')}`;
+      const photoContainerId = `photo-container-${date.replace(/-/g, '')}`;
+      content += `
+        <div style="margin-top: 12px;">
+          <button class="photo-toggle-btn" id="${photoId}" style="width: 100%;">Показать фото</button>
+          <div class="photo-container" id="${photoContainerId}" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out;">
+            <div class="photo-placeholder" style="width: 200px; height: 150px; background: #f0f0f0; border: 2px dashed #ccc; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin: 12px auto; color: #999;">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 48px; height: 48px;">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+  } else {
+    content += `<div class="day-content muted">Нет данных за эту дату</div>`;
+  }
+  
+  // Обновляем содержимое элемента
+  dayElement.innerHTML = content;
+  
+  // Восстанавливаем обработчики событий
+  const photoToggleBtn = dayElement.querySelector(`#photo-${date.replace(/-/g, '')}`);
+  const photoContainer = dayElement.querySelector(`#photo-container-${date.replace(/-/g, '')}`);
+  const photoImg = dayElement.querySelector(`#photo-img-${date.replace(/-/g, '')}`);
+  
+  if (photoToggleBtn && photoContainer) {
+    photoToggleBtn.onclick = () => {
+      const isExpanded = photoContainer.classList.contains('expanded');
+      if (isExpanded) {
+        photoContainer.classList.remove('expanded');
+        photoContainer.style.maxHeight = '0px';
+        photoToggleBtn.textContent = 'Показать фото';
+      } else {
+        photoContainer.classList.add('expanded');
+        photoContainer.style.maxHeight = '500px';
+        photoToggleBtn.textContent = 'Скрыть фото';
+      }
+    };
+  }
+  
+  if (photoImg && updatedRec.photo_url) {
+    photoImg.onclick = () => {
+      openLightbox(updatedRec.photo_url);
+    };
+  }
+  
+  console.log('День обновлен в списке:', date);
+}
+
 async function renderBoss(){
+  console.log('renderBoss() вызван');
   const app = $('#app');
   const now = new Date();
   let year = now.getFullYear(), monthIdx = now.getMonth(); // 0-based
@@ -1105,16 +1436,28 @@ async function renderBoss(){
               return;
             }
             
-            // Пересчитываем баланс для выбранной даты перед показом отчета
-            const tempDate = currentDate;
-            currentDate = dateISO;
-            await recalculateBalance();
-            currentDate = tempDate;
-            
-            // Получаем обновленные данные после пересчета
-            const updatedRec = await getRecord(dateISO);
+            // Используем сохраненные данные без пересчета
+            // Пересчет происходит только при сохранении данных в конкретном дне
+            // Это предотвращает цепную реакцию пересчета всех дней
+            const updatedRec = rec;
             const prev = await getPrevDayRecord(dateISO);
-            const carryPrev = prev ? (prev.carry_new_min || 0) : 0;
+            
+            // Для первой записи (когда нет предыдущей) остаток на начало строго 0
+            let carryPrev = 0;
+            if (prev && prev.date) {
+              // Есть предыдущая запись - берем её carry_new_min
+              // Проверяем, что это действительно число
+              const prevCarry = prev.carry_new_min;
+              if (typeof prevCarry === 'number' && !isNaN(prevCarry)) {
+                carryPrev = prevCarry;
+              } else {
+                carryPrev = 0;
+              }
+            } else {
+              // Нет предыдущей записи - остаток с прошлого дня строго = 0
+              carryPrev = 0;
+            }
+            
             const rep = buildReport(updatedRec, mmToHhmm(carryPrev));
             console.log('Отчет:', rep);
             const dateFormatted = formatDate(dateISO);
@@ -1131,6 +1474,7 @@ async function renderBoss(){
     });
   }
   
+
   async function drawMonthList(){
     const content = $('#bossContent');
     content.innerHTML = '<div class="week-view" id="monthListView"></div>';
@@ -1141,9 +1485,26 @@ async function renderBoss(){
     $('#ym').textContent = `${toRusMonth(monthIdx)} ${year}`;
     
     const monthView = $('#monthListView');
-    monthView.innerHTML = '<div class="muted">Загрузка...</div>';
     
-    const data = await getAllRecords();
+    // Проверяем кеш (кеш действителен 30 секунд)
+    const cacheKey = ym;
+    const now = Date.now();
+    const cacheAge = 30000; // 30 секунд
+    let data = null;
+    
+    if (monthDataCache[cacheKey] && monthDataCacheTime[cacheKey] && (now - monthDataCacheTime[cacheKey]) < cacheAge) {
+      // Используем кеш
+      data = monthDataCache[cacheKey];
+      console.log('Используется кеш для месяца:', ym);
+    } else {
+      // Загружаем данные
+      monthView.innerHTML = '<div class="muted">Загрузка...</div>';
+      data = await getAllRecords();
+      // Сохраняем в кеш
+      monthDataCache[cacheKey] = data;
+      monthDataCacheTime[cacheKey] = now;
+      console.log('Данные загружены и сохранены в кеш для месяца:', ym);
+    }
     
     // Получаем все дни месяца
     const daysInMonth = new Date(year, monthIdx+1, 0).getDate();
@@ -1153,26 +1514,50 @@ async function renderBoss(){
       days.push({ date: dateISO, rec: data[dateISO] || { date: dateISO } });
     }
     
+    // Очищаем контейнер и отображаем дни сразу
     monthView.innerHTML = '';
-    // Обрабатываем дни последовательно, чтобы корректно пересчитать баланс для каждого
+    
+    // Используем сохраненные значения из базы данных, не пересчитываем автоматически
+    // Это предотвращает цепную реакцию пересчета всех дней
+    // ОПТИМИЗАЦИЯ: Используем уже загруженные данные вместо отдельных запросов к базе
     for (const {date, rec} of days) {
       const div = document.createElement('div');
       div.className = 'day-card-static'; // Статичный блок без hover и клика
+      div.setAttribute('data-date', date); // Добавляем data-атрибут для поиска элемента
       
       const dateObj = new Date(date);
       const dayName = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][dateObj.getDay()];
-      // Убираем синюю подсветку для сегодняшней даты в режиме списка
       
-      // Пересчитываем баланс для этой даты
-      const tempDate = currentDate;
-      currentDate = date;
-      await recalculateBalance();
-      currentDate = tempDate;
+      // Используем сохраненные данные без пересчета
+      // Пересчет происходит только при сохранении данных в конкретном дне
+      const updatedRec = rec;
       
-      // Получаем обновленные данные после пересчета
-      const updatedRec = await getRecord(date);
-      const prev = await getPrevDayRecord(date);
-      const carryPrev = prev ? (prev.carry_new_min || 0) : 0;
+      // ОПТИМИЗАЦИЯ: Используем уже загруженные данные вместо запроса к базе
+      const prev = findPrevRecordInData(date, data);
+      
+      // Для первой записи (когда нет предыдущей) остаток на начало строго 0
+      let carryPrev = 0;
+      if (prev && prev.date) {
+        // Есть предыдущая запись - берем её carry_new_min
+        // Проверяем, что это действительно число
+        const prevCarry = prev.carry_new_min;
+        if (typeof prevCarry === 'number' && !isNaN(prevCarry)) {
+          // Проверяем, что это не timestamp (timestamp был бы очень большим числом)
+          const MAX_REASONABLE_MINUTES = 100000;
+          const MIN_REASONABLE_MINUTES = -100000;
+          if (prevCarry > MAX_REASONABLE_MINUTES || prevCarry < MIN_REASONABLE_MINUTES) {
+            console.warn('Обнаружено некорректное значение carry_new_min:', prevCarry, 'для даты:', prev.date);
+            carryPrev = 0;
+          } else {
+            carryPrev = Math.round(prevCarry);
+          }
+        } else {
+          carryPrev = 0;
+        }
+      } else {
+        // Нет предыдущей записи - остаток с прошлого дня строго = 0
+        carryPrev = 0;
+      }
       
       // Используем ту же функцию buildReport, что и во всплывающем окне
       const report = buildReport(updatedRec, mmToHhmm(carryPrev));
@@ -1205,7 +1590,7 @@ async function renderBoss(){
                   src="${updatedRec.photo_url}" 
                   alt="Фото сдачи ключей" 
                   loading="lazy"
-                  style="max-width: 200px; max-height: 150px; border-radius: 8px; cursor: pointer; display: block; margin: 12px auto; border: 1px solid #ddd; transition: transform 0.2s;"
+                  style="max-width: 200px; max-height: 150px; border-radius: 8px; cursor: pointer; display: block; margin: 12px auto; border: 1px solid #ddd; transition: transform 0.2s; object-fit: contain; width: auto; height: auto;"
                 >
               </div>
             </div>
@@ -1279,7 +1664,59 @@ async function renderBoss(){
 }
 
 /***** ROUTER *****/
+// Проверка режима "только для начальника" через параметр URL
+function isBossOnlyMode() {
+  // Проверяем, что мы на странице boss.html
+  const pathname = window.location.pathname;
+  const href = window.location.href;
+  
+  // Проверяем путь к файлу разными способами
+  const filename = pathname.split('/').pop(); // Получаем имя файла
+  const hasBossHtml = filename === 'boss.html' || 
+                      pathname.endsWith('/boss.html') || 
+                      pathname.includes('boss.html') ||
+                      href.includes('boss.html');
+  
+  if (hasBossHtml) {
+    console.log('Режим начальника: обнаружен boss.html, pathname:', pathname, 'filename:', filename);
+    return true;
+  }
+  
+  // Проверяем параметр URL ?mode=boss или хеш #boss-only
+  const urlParams = new URLSearchParams(window.location.search);
+  const hash = window.location.hash;
+  if (urlParams.get('mode') === 'boss' || hash === '#boss-only' || hash === '#/boss-only') {
+    console.log('Режим начальника: обнаружен параметр mode=boss или хеш');
+    return true;
+  }
+  
+  return false;
+}
+
 function route(){
+  // Проверяем режим "только для начальника"
+  const bossMode = isBossOnlyMode();
+  console.log('route() вызван, bossMode:', bossMode, 'pathname:', window.location.pathname);
+  
+  if (bossMode) {
+    // Скрываем навигацию
+    const header = document.querySelector('header');
+    if (header) {
+      header.style.display = 'none';
+    }
+    // Показываем только экран начальника (игнорируем хеш)
+    currentDate = todayISO();
+    console.log('Показываем экран начальника');
+    renderBoss();
+    return;
+  }
+  
+  // Обычный режим - показываем навигацию
+  const header = document.querySelector('header');
+  if (header) {
+    header.style.display = 'block';
+  }
+  
   const h = location.hash || '#/me';
   $('#tabMe').classList.toggle('active', h==='#/me');
   $('#tabBoss').classList.toggle('active', h==='#/boss');
@@ -1290,7 +1727,14 @@ function route(){
     renderMe();
   }
 }
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => {
+  // В режиме boss-only игнорируем изменения хеша
+  if (isBossOnlyMode()) {
+    console.log('Игнорируем изменение хеша в режиме boss-only');
+    return;
+  }
+  route();
+});
 window.addEventListener('load', route);
 
 /***** MODAL *****/

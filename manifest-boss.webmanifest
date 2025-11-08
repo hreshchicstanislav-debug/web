@@ -1,8 +1,8 @@
 {
-  "name": "TimeTrack - Учет рабочего времени",
-  "short_name": "TimeTrack",
-  "description": "Приложение для учета рабочего времени",
-  "start_url": "/#/me",
+  "name": "TimeTrack - Экран начальника",
+  "short_name": "TimeTrack Boss",
+  "description": "Экран начальника для просмотра отчетов",
+  "start_url": "/boss.html",
   "scope": "/",
   "display": "standalone",
   "background_color": "#F7F7F8",
@@ -23,3 +23,4 @@
     }
   ]
 }
+
