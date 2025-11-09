@@ -200,13 +200,16 @@ function syncShootings() {
         };
         
         Logger.log('Синхронизируем: ' + shootingData.date + ' ' + shootingData.start_time + '-' + shootingData.end_time + ' (ID: ' + shootingData.google_event_id + ')');
+        Logger.log('Данные для отправки: ' + JSON.stringify(shootingData));
         
         // Отправляем в Supabase (upsert - обновляет существующие или создает новые)
         const result = sendToSupabase(shootingData);
         if (result) {
           successCount++;
+          Logger.log('✓ Успешно синхронизировано: ' + shootingData.date);
         } else {
           errorCount++;
+          Logger.log('✗ Ошибка синхронизации: ' + shootingData.date);
         }
       } catch (error) {
         Logger.log('Ошибка обработки события: ' + error.toString());
@@ -214,13 +217,20 @@ function syncShootings() {
       }
     });
     
+    // Собираем ID событий из календаря
+    const calendarEventIds = shootings.map(event => event.getId());
+    Logger.log('ID событий в календаре: ' + calendarEventIds.length);
+    
     // Удаляем старые съёмки из базы (которые уже прошли)
     deleteOldShootings(now);
+    
+    // Удаляем съёмки, которые были удалены из календаря
+    deleteRemovedShootings(calendarEventIds, now);
     
     Logger.log('=== Результат синхронизации ===');
     Logger.log('Успешно синхронизировано: ' + successCount);
     Logger.log('Ошибок: ' + errorCount);
-    Logger.log('Всего съёмок: ' + shootings.length);
+    Logger.log('Всего съёмок в календаре: ' + shootings.length);
   } catch (error) {
     Logger.log('КРИТИЧЕСКАЯ ОШИБКА синхронизации: ' + error.toString());
     Logger.log('Стек ошибки: ' + error.stack);
@@ -239,15 +249,113 @@ function deleteOldShootings(now) {
         'Content-Type': 'application/json',
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-      }
+      },
+      muteHttpExceptions: true
     };
     
     const response = UrlFetchApp.fetch(url, options);
-    if (response.getResponseCode() === 200 || response.getResponseCode() === 204) {
-      Logger.log('Старые съёмки удалены');
+    const responseCode = response.getResponseCode();
+    if (responseCode === 200 || responseCode === 204) {
+      Logger.log('Старые съёмки (прошедшие даты) удалены');
+    } else {
+      Logger.log('Ошибка удаления старых съёмок (код ' + responseCode + '): ' + response.getContentText());
     }
   } catch (error) {
     Logger.log('Ошибка удаления старых съёмок: ' + error.toString());
+  }
+}
+
+// Функция для удаления съёмок, которые были удалены из календаря
+function deleteRemovedShootings(calendarEventIds, now) {
+  try {
+    const today = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    
+    // Получаем все будущие съёмки из Supabase
+    const url = `${SUPABASE_URL}/rest/v1/shootings?date=gte.${today}&select=google_event_id`;
+    
+    const options = {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+      },
+      muteHttpExceptions: true
+    };
+    
+    const response = UrlFetchApp.fetch(url, options);
+    const responseCode = response.getResponseCode();
+    
+    if (responseCode !== 200) {
+      Logger.log('Ошибка получения съёмок из Supabase (код ' + responseCode + '): ' + response.getContentText());
+      return;
+    }
+    
+    const responseText = response.getContentText();
+    let supabaseShootings = [];
+    
+    try {
+      supabaseShootings = JSON.parse(responseText);
+    } catch (parseError) {
+      Logger.log('Ошибка парсинга ответа от Supabase: ' + parseError.toString());
+      Logger.log('Ответ: ' + responseText);
+      return;
+    }
+    
+    if (!Array.isArray(supabaseShootings)) {
+      Logger.log('Неожиданный формат ответа от Supabase: ' + responseText);
+      return;
+    }
+    
+    Logger.log('Найдено съёмок в Supabase: ' + supabaseShootings.length);
+    
+    // Находим съёмки, которых нет в календаре
+    const shootingsToDelete = supabaseShootings.filter(shooting => {
+      return !calendarEventIds.includes(shooting.google_event_id);
+    });
+    
+    if (shootingsToDelete.length === 0) {
+      Logger.log('Все съёмки из Supabase присутствуют в календаре');
+      return;
+    }
+    
+    Logger.log('Найдено съёмок для удаления (отсутствуют в календаре): ' + shootingsToDelete.length);
+    
+    // Удаляем каждую съёмку
+    let deletedCount = 0;
+    shootingsToDelete.forEach(shooting => {
+      try {
+        const deleteUrl = `${SUPABASE_URL}/rest/v1/shootings?google_event_id=eq.${encodeURIComponent(shooting.google_event_id)}`;
+        
+        const deleteOptions = {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          },
+          muteHttpExceptions: true
+        };
+        
+        const deleteResponse = UrlFetchApp.fetch(deleteUrl, deleteOptions);
+        const deleteCode = deleteResponse.getResponseCode();
+        
+        if (deleteCode === 200 || deleteCode === 204) {
+          deletedCount++;
+          Logger.log('✓ Удалена съёмка с ID: ' + shooting.google_event_id);
+        } else {
+          Logger.log('✗ Ошибка удаления съёмки с ID ' + shooting.google_event_id + ' (код ' + deleteCode + '): ' + deleteResponse.getContentText());
+        }
+      } catch (error) {
+        Logger.log('✗ Ошибка удаления съёмки с ID ' + shooting.google_event_id + ': ' + error.toString());
+      }
+    });
+    
+    Logger.log('=== Удаление завершено ===');
+    Logger.log('Удалено съёмок из Supabase: ' + deletedCount + ' из ' + shootingsToDelete.length);
+  } catch (error) {
+    Logger.log('Ошибка удаления удаленных съёмок: ' + error.toString());
+    Logger.log('Стек ошибки: ' + error.stack);
   }
 }
 
@@ -280,10 +388,13 @@ function sendToSupabase(shootingData) {
     
     // 201 - создана новая запись
     if (responseCode === 201 || responseCode === 200 || responseCode === 204) {
+      Logger.log('✓ Новая запись успешно создана через POST для ID: ' + shootingData.google_event_id);
       return true;
     } else {
       const responseText = response.getContentText();
-      Logger.log('Ошибка создания записи в Supabase (код ' + responseCode + '): ' + responseText);
+      Logger.log('✗ Ошибка создания записи в Supabase (код ' + responseCode + ') для ID: ' + shootingData.google_event_id);
+      Logger.log('Ответ сервера: ' + responseText);
+      Logger.log('Отправленные данные: ' + JSON.stringify(shootingData));
       return false;
     }
   } catch (error) {
@@ -315,15 +426,16 @@ function updateExistingShooting(shootingData) {
     const responseCode = response.getResponseCode();
     
     if (responseCode === 200 || responseCode === 204) {
-      Logger.log('Запись успешно обновлена через PATCH');
+      Logger.log('✓ Запись успешно обновлена через PATCH для ID: ' + shootingData.google_event_id);
       return true;
     } else if (responseCode === 404) {
       // Запись не найдена - это нормально, будем создавать новую
-      Logger.log('Запись не найдена, будет создана новая');
+      Logger.log('→ Запись не найдена (404), будет создана новая для ID: ' + shootingData.google_event_id);
       return false;
     } else {
       const responseText = response.getContentText();
-      Logger.log('Ошибка обновления через PATCH (код ' + responseCode + '): ' + responseText);
+      Logger.log('✗ Ошибка обновления через PATCH (код ' + responseCode + ') для ID: ' + shootingData.google_event_id);
+      Logger.log('Ответ сервера: ' + responseText);
       return false;
     }
   } catch (error) {
@@ -395,29 +507,44 @@ function setupTrigger() {
 
 ### 4.6. Отладка и проверка
 
-Если синхронизируется ноль съёмок:
+Если синхронизируется ноль съёмок или новая съёмка не появляется:
 
 1. **Проверьте логи:**
    - В Google Apps Script откройте **Executions** (выполнения)
    - Выберите последнее выполнение функции `syncShootings`
-   - Проверьте логи — там будет информация:
+   - Проверьте логи — там будет подробная информация:
      - Сколько событий найдено в календаре
      - Сколько отфильтровано
-     - Какие ошибки возникли
+     - Какие данные отправляются в Supabase
+     - Какие ошибки возникли (с кодами ответов и текстом ошибок)
+     - Успешно ли созданы/обновлены записи
 
 2. **Проверьте настройки:**
    - Убедитесь, что `CALENDAR_ID` указан правильно
    - Убедитесь, что `KEYWORDS = []` (пустой массив) для синхронизации всех событий
    - Убедитесь, что `FILTER_BY_COLOR = null` (если не используете фильтрацию по цвету)
+   - Проверьте, что `SUPABASE_URL` и `SUPABASE_ANON_KEY` указаны правильно
 
 3. **Проверьте календарь:**
    - Убедитесь, что в календаре есть будущие события (начиная с сегодняшнего дня)
    - Убедитесь, что события не закончились (время окончания >= текущее время)
+   - Проверьте, что событие находится в правильном календаре (с ID из `CALENDAR_ID`)
 
 4. **Проверьте Supabase:**
    - Убедитесь, что таблица `shootings` создана
-   - Проверьте, что `SUPABASE_URL` и `SUPABASE_ANON_KEY` указаны правильно
    - Проверьте права доступа (таблица должна быть доступна для записи через anon key)
+   - Проверьте, что в таблице есть записи (может быть, они уже синхронизированы)
+
+5. **Если новая съёмка не синхронизируется:**
+   - Проверьте логи — там будет видно, отправляется ли событие в Supabase
+   - Проверьте, что событие не закончилось (время окончания >= текущее время)
+   - Проверьте, что событие находится в правильном календаре
+   - Проверьте ответ сервера Supabase в логах — там будет видно, почему запись не создалась
+
+6. **Проверка удаления съёмок:**
+   - При удалении съёмки из календаря она автоматически удалится из Supabase при следующей синхронизации
+   - Проверьте логи — там будет видно, сколько съёмок найдено для удаления
+   - Убедитесь, что функция `deleteRemovedShootings` вызывается после синхронизации
 
 ## Шаг 5: Альтернативный вариант - Node.js сервер
 
