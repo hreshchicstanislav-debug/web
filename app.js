@@ -1577,7 +1577,7 @@ async function renderBoss(){
         <span id="viewToggleText">Показать списком</span>
       </button>
     </div>
-    <div id="shootingsContainer" style="display: none; margin-bottom: 16px;">
+    <div id="shootingsContainer" class="shootings-container" style="margin-bottom: 16px;">
       <div class="day-card-static" id="shootingsList"></div>
     </div>
     <div class="row">
@@ -1589,10 +1589,30 @@ async function renderBoss(){
   `;
   
   // Переключатель режима отображения
-  $('#viewToggle').onclick = () => {
+  $('#viewToggle').onclick = async () => {
+    const content = $('#bossContent');
+    
+    // Плавное скрытие текущего контента
+    content.classList.add('fade-out');
+    
+    // Ждем завершения анимации скрытия
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // Меняем режим
     viewMode = viewMode === 'calendar' ? 'list' : 'calendar';
     $('#viewToggleText').textContent = viewMode === 'calendar' ? 'Показать списком' : 'Показать календарем';
-    renderContent();
+    
+    // Рендерим новый контент
+    await renderContent();
+    
+    // Плавное появление нового контента
+    content.classList.remove('fade-out');
+    content.classList.add('fade-in');
+    
+    // Убираем класс fade-in после завершения анимации
+    setTimeout(() => {
+      content.classList.remove('fade-in');
+    }, 300);
   };
   
   // Переключатель отображения съёмок
@@ -1603,11 +1623,15 @@ async function renderBoss(){
     const toggleText = $('#shootingsToggleText');
     
     if (shootingsExpanded) {
-      container.style.display = 'block';
-      toggleText.textContent = 'Скрыть съёмки';
+      // Загружаем данные перед раскрытием
       await renderShootings();
+      
+      // Раскрываем с анимацией
+      container.classList.add('expanded');
+      toggleText.textContent = 'Скрыть съёмки';
     } else {
-      container.style.display = 'none';
+      // Скрываем с анимацией
+      container.classList.remove('expanded');
       toggleText.textContent = 'Показать съёмки';
     }
   };
@@ -1680,6 +1704,15 @@ async function renderBoss(){
       }
     });
 
+    // Загружаем съёмки для текущего месяца
+    const shootings = await getUpcomingShootings();
+    const shootingsMap = {};
+    shootings.forEach(shooting => {
+      if (shooting.date.startsWith(ym)) {
+        shootingsMap[shooting.date] = shooting;
+      }
+    });
+
     const firstWeekday = (new Date(year, monthIdx, 1).getDay() + 6) % 7; // 0-пн
     const daysInMonth = new Date(year, monthIdx+1, 0).getDate();
     const cells = [];
@@ -1704,11 +1737,24 @@ async function renderBoss(){
           div.style.fontWeight = 'bold';
         }
         
-        // Добавляем точку если есть фото
+        // Добавляем точку если есть фото (левый нижний угол)
         if (rec.photo_url) {
           const photoIcon = document.createElement('div');
           photoIcon.className = 'cell-photo-icon';
           div.appendChild(photoIcon);
+        }
+        
+        // Добавляем иконку фотоаппарата если есть съёмка (правый нижний угол)
+        if (shootingsMap[dateISO]) {
+          const shootingIcon = document.createElement('div');
+          shootingIcon.className = 'cell-shooting-icon';
+          shootingIcon.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          `;
+          div.appendChild(shootingIcon);
         }
         
         // Сохраняем dateISO в data-атрибуте для надежности

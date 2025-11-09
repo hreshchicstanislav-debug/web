@@ -207,6 +207,20 @@
       flex-wrap: wrap;
     }
     
+    #bossContent{
+      transition: opacity 200ms ease-in-out, transform 200ms ease-in-out;
+    }
+    
+    #bossContent.fade-out{
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    
+    #bossContent.fade-in{
+      opacity: 1;
+      transform: translateY(0);
+    }
+    
     .calendar{
       display: grid;
       grid-template-columns: repeat(7,1fr);
@@ -251,6 +265,21 @@
       background: var(--text-secondary);
       opacity: 0.8;
       border-radius: 50%;
+    }
+    
+    .cell-shooting-icon{
+      position: absolute;
+      bottom: 2px;
+      right: 2px;
+      width: 16px;
+      height: 16px;
+      color: var(--text-secondary);
+      opacity: 0.8;
+    }
+    
+    .cell-shooting-icon svg{
+      width: 100%;
+      height: 100%;
     }
     
     .time-wrapper{
@@ -430,6 +459,19 @@
       max-height: 500px;
     }
     
+    .shootings-container{
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 300ms cubic-bezier(0.2,0.8,0.2,1);
+      opacity: 0;
+    }
+    
+    .shootings-container.expanded{
+      max-height: 2000px;
+      opacity: 1;
+      transition: max-height 300ms cubic-bezier(0.2,0.8,0.2,1), opacity 200ms ease-in;
+    }
+    
     #photoContent{
       display: flex;
       align-items: center;
@@ -604,6 +646,12 @@
         bottom: 1px;
         left: 1px;
       }
+      .cell-shooting-icon{
+        width: 14px;
+        height: 14px;
+        bottom: 1px;
+        right: 1px;
+      }
       .day-card, .day-card-static{
         padding: 12px;
         border-radius: 12px;
@@ -667,6 +715,10 @@
       .cell-photo-icon{
         width: 6px;
         height: 6px;
+      }
+      .cell-shooting-icon{
+        width: 12px;
+        height: 12px;
       }
       .day-card, .day-card-static{
         padding: 10px;
