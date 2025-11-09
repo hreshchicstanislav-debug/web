@@ -1,5 +1,5 @@
 // Service Worker для PWA
-const CACHE_NAME = 'timetrack-v1';
+const CACHE_NAME = 'timetrack-v2';
 // Получаем базовый путь (для GitHub Pages может быть /repo-name/)
 const BASE_PATH = self.location.pathname.replace(/\/service-worker\.js$/, '') || '/';
 const urlsToCache = [

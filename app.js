@@ -78,6 +78,7 @@ function copyToClipboard(t){
 
 /***** SUPABASE STORAGE *****/
 const TABLE_NAME = 'time_tracks';
+const SHOOTINGS_TABLE_NAME = 'shootings'; // Таблица для съёмок
 const STORAGE_BUCKET = 'photos'; // Имя bucket для хранения фотографий
 
 // Загрузить все записи
@@ -256,6 +257,115 @@ async function getPrevDayRecord(date){
   } catch (e) {
     console.error('Ошибка получения предыдущей записи:', e);
     return null;
+  }
+}
+
+/***** SHOOTINGS (Съёмки из Google Calendar) *****/
+
+// Преобразование времени съёмки в время отсутствия на работе
+// Вычитаем 1 час от начала (время ухода) и добавляем 40 минут к концу (время возвращения)
+function convertShootingTime(startTime, endTime) {
+  // Преобразуем время в минуты
+  const startMinutes = toMinutes(startTime);
+  const endMinutes = toMinutes(endTime);
+  
+  // Вычитаем 1 час (60 минут) от начала
+  const departureMinutes = startMinutes - 60;
+  
+  // Добавляем 40 минут к концу
+  const returnMinutes = endMinutes + 40;
+  
+  // Преобразуем обратно в формат HH:MM
+  const departureTime = mmToHhmm(departureMinutes);
+  const returnTime = mmToHhmm(returnMinutes);
+  
+  return {
+    departure: departureTime,
+    return: returnTime,
+    display: `~${departureTime}–${returnTime}`
+  };
+}
+
+// Получить все предстоящие съёмки
+async function getUpcomingShootings() {
+  try {
+    if (!supabaseClient) {
+      console.error('Supabase не инициализирован');
+      return [];
+    }
+    
+    const today = todayISO();
+    
+    // Получаем все съёмки начиная с сегодняшнего дня, отсортированные по дате
+    const { data, error } = await supabaseClient
+      .from(SHOOTINGS_TABLE_NAME)
+      .select('*')
+      .gte('date', today)
+      .order('date', { ascending: true })
+      .order('start_time', { ascending: true });
+    
+    if (error) {
+      console.error('Ошибка загрузки съёмок:', error);
+      return [];
+    }
+    
+    return data || [];
+  } catch (e) {
+    console.error('Ошибка загрузки съёмок:', e);
+    return [];
+  }
+}
+
+// Сохранить или обновить съёмку
+async function saveShooting(shootingData) {
+  try {
+    if (!supabaseClient) {
+      console.error('Supabase не инициализирован');
+      return null;
+    }
+    
+    // Если есть google_event_id, проверяем существование
+    if (shootingData.google_event_id) {
+      const { data: existing } = await supabaseClient
+        .from(SHOOTINGS_TABLE_NAME)
+        .select('*')
+        .eq('google_event_id', shootingData.google_event_id)
+        .single();
+      
+      if (existing) {
+        // Обновляем существующую запись
+        const { data, error } = await supabaseClient
+          .from(SHOOTINGS_TABLE_NAME)
+          .update(shootingData)
+          .eq('google_event_id', shootingData.google_event_id)
+          .select()
+          .single();
+        
+        if (error) {
+          console.error('Ошибка обновления съёмки:', error);
+          throw error;
+        }
+        
+        return data;
+      }
+    }
+    
+    // Создаем новую запись
+    const { data, error } = await supabaseClient
+      .from(SHOOTINGS_TABLE_NAME)
+      .insert(shootingData)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Ошибка создания съёмки:', error);
+      throw error;
+    }
+    
+    return data;
+  } catch (e) {
+    console.error('Ошибка сохранения съёмки:', e);
+    throw e;
   }
 }
 
@@ -1460,9 +1570,15 @@ async function renderBoss(){
     <h1>Экран начальника</h1>
     <div class="row" style="margin-bottom: 16px;">
       <div style="flex: 1;"></div>
+      <button id="shootingsToggle" class="btn" style="width: auto; padding: 8px 16px; margin-right: 8px;">
+        <span id="shootingsToggleText">Показать съёмки</span>
+      </button>
       <button id="viewToggle" class="btn" style="width: auto; padding: 8px 16px;">
         <span id="viewToggleText">Показать списком</span>
       </button>
+    </div>
+    <div id="shootingsContainer" style="display: none; margin-bottom: 16px;">
+      <div class="day-card-static" id="shootingsList"></div>
     </div>
     <div class="row">
       <button id="prevM" class="btn">←</button>
@@ -1478,6 +1594,65 @@ async function renderBoss(){
     $('#viewToggleText').textContent = viewMode === 'calendar' ? 'Показать списком' : 'Показать календарем';
     renderContent();
   };
+  
+  // Переключатель отображения съёмок
+  let shootingsExpanded = false;
+  $('#shootingsToggle').onclick = async () => {
+    shootingsExpanded = !shootingsExpanded;
+    const container = $('#shootingsContainer');
+    const toggleText = $('#shootingsToggleText');
+    
+    if (shootingsExpanded) {
+      container.style.display = 'block';
+      toggleText.textContent = 'Скрыть съёмки';
+      await renderShootings();
+    } else {
+      container.style.display = 'none';
+      toggleText.textContent = 'Показать съёмки';
+    }
+  };
+  
+  // Функция отображения списка съёмок
+  async function renderShootings() {
+    const shootingsList = $('#shootingsList');
+    if (!shootingsList) return;
+    
+    try {
+      const shootings = await getUpcomingShootings();
+      
+      if (shootings.length === 0) {
+        shootingsList.innerHTML = `
+          <div class="day-header">Предстоящие съёмки</div>
+          <div class="day-content muted">Нет предстоящих съёмок</div>
+        `;
+        return;
+      }
+      
+      let html = '<div class="day-header">Предстоящие съёмки</div>';
+      
+      shootings.forEach(shooting => {
+        const converted = convertShootingTime(shooting.start_time, shooting.end_time);
+        const dateFormatted = formatDate(shooting.date);
+        const title = shooting.title || 'Съёмка';
+        
+        html += `
+          <div style="margin: 12px 0; padding: 12px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface);">
+            <div style="font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">${dateFormatted}</div>
+            <div style="color: var(--text-secondary); font-size: 14px; margin-bottom: 4px;">${title}</div>
+            <div style="color: var(--text-primary); font-size: 15px; font-weight: 500;">${converted.display}</div>
+          </div>
+        `;
+      });
+      
+      shootingsList.innerHTML = html;
+    } catch (error) {
+      console.error('Ошибка загрузки съёмок:', error);
+      shootingsList.innerHTML = `
+        <div class="day-header">Предстоящие съёмки</div>
+        <div class="day-content muted">Ошибка загрузки съёмок</div>
+      `;
+    }
+  }
   
   async function renderContent() {
     const content = $('#bossContent');
@@ -1529,16 +1704,10 @@ async function renderBoss(){
           div.style.fontWeight = 'bold';
         }
         
-        // Добавляем иконку фотоаппарата если есть фото
+        // Добавляем точку если есть фото
         if (rec.photo_url) {
           const photoIcon = document.createElement('div');
           photoIcon.className = 'cell-photo-icon';
-          photoIcon.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          `;
           div.appendChild(photoIcon);
         }
         
