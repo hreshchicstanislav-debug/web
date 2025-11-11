@@ -481,6 +481,14 @@ function buildReport(rec, carryPrevText){
     }
   }
   
+  // Пустая строка после "Остаток на конец дня" (такой же отступ как между другими блоками)
+  lines.push('');
+  
+  // Комментарий (если есть)
+  if (rec.comment && rec.comment.trim()) {
+    lines.push(formatLine('Комментарий:', rec.comment.trim()));
+  }
+  
   return lines.join('\n');
 }
 function deltaText(min){ const sign = min>=0 ? '+' : ''; return `${sign}${mmToHhmm(min)}`; }
@@ -536,10 +544,10 @@ async function renderMe(){
     </div>
 
     <label>Комментарий</label>
-    <div style="position: relative;">
-      <textarea id="comment" rows="3" placeholder="Опционально" style="padding-right: 50px; box-sizing: border-box; width: 100%;"></textarea>
-      <button id="commentConfirm" class="time-confirm-btn" style="display: none; position: absolute; right: 8px; bottom: 8px; z-index: 10;" title="Подтвердить комментарий">✓</button>
-      <span id="commentCheck" class="checkmark" style="position: absolute; right: 8px; bottom: 8px; z-index: 10;">✓</span>
+    <div class="time-wrapper">
+      <input id="comment" type="text" placeholder="Опционально" readonly style="cursor: pointer;">
+      <button id="commentConfirm" class="time-confirm-btn" style="display: none;" title="Подтвердить комментарий">✓</button>
+      <span id="commentCheck" class="checkmark">✓</span>
     </div>
 
     <div class="right">
@@ -635,18 +643,12 @@ async function renderMe(){
   // Сохраняем предыдущее значение комментария для проверки изменений
   window.previousComment = '';
   
-  // Показываем кнопку подтверждения при изменении комментария
-  $('#comment').addEventListener('input', (e) => {
-    const newValue = e.target.value || '';
-    // Показываем кнопку подтверждения, если есть значение и оно отличается от сохраненного
-    if (newValue !== window.previousComment) {
-      $('#commentConfirm').style.display = 'inline-flex';
-    } else {
-      $('#commentConfirm').style.display = 'none';
-    }
+  // Открываем модальное окно при клике на поле комментария
+  $('#comment').addEventListener('click', () => {
+    openCommentModal();
   });
   
-  // Кнопка подтверждения для комментария
+  // Кнопка подтверждения для комментария (галочка)
   $('#commentConfirm').addEventListener('click', async (e) => {
     e.preventDefault();
     const newValue = $('#comment').value || '';
@@ -1218,7 +1220,68 @@ async function showReportForToday(){
   copyToClipboard(rep).then(()=>console.log('Отчёт скопирован'));
 }
 
-// Функция открытия модального окна для загрузки фото
+// Функция открытия модального окна для редактирования комментария
+async function openCommentModal(){
+  const rec = await getRecord(currentDate);
+  const currentComment = rec.comment || '';
+  
+  const modalHTML = `
+    <div style="margin-bottom: 16px;">
+      <label style="display: block; margin-bottom: 8px;">Комментарий</label>
+      <textarea id="commentTextarea" rows="6" placeholder="Введите комментарий..." style="width: 100%; padding: 12px; border: 1px solid var(--border-default); border-radius: 8px; font-size: 15px; font-family: inherit; resize: vertical; box-sizing: border-box;">${currentComment}</textarea>
+    </div>
+    <div style="display: flex; justify-content: space-between; gap: 12px; margin-top: 16px;">
+      <button id="commentReset" class="btn" style="flex: 1;">Сбросить</button>
+      <button id="commentDone" class="btn" style="flex: 1;">Готово</button>
+    </div>
+  `;
+  
+  openModalHTML('Комментарий', modalHTML);
+  
+  // Устанавливаем ширину модального окна равной ширине одного поля времени (примерно 50% от row минус gap)
+  const modal = document.querySelector('.modal');
+  if (modal) {
+    // Вычисляем ширину одного поля времени из .row
+    const rowElement = document.querySelector('.row');
+    if (rowElement) {
+      const rowWidth = rowElement.offsetWidth;
+      const gap = 12; // gap из .row
+      const fieldWidth = (rowWidth - gap) / 2; // ширина одного поля
+      modal.style.maxWidth = fieldWidth + 'px';
+      modal.style.width = 'auto';
+    }
+  }
+  
+  const commentTextarea = $('#commentTextarea');
+  const commentReset = $('#commentReset');
+  const commentDone = $('#commentDone');
+  
+  // Кнопка "Сбросить"
+  commentReset.addEventListener('click', () => {
+    commentTextarea.value = '';
+  });
+  
+  // Кнопка "Готово"
+  commentDone.addEventListener('click', () => {
+    const newValue = commentTextarea.value.trim();
+    // Обновляем поле комментария на главном экране
+    $('#comment').value = newValue;
+    // Показываем кнопку подтверждения, если есть текст
+    if (newValue && newValue !== window.previousComment) {
+      $('#commentConfirm').style.display = 'inline-flex';
+    } else {
+      $('#commentConfirm').style.display = 'none';
+    }
+    // Закрываем модальное окно
+    closeModal();
+  });
+  
+  // Фокус на textarea при открытии
+  setTimeout(() => {
+    commentTextarea.focus();
+  }, 100);
+}
+
 async function openPhotoModal(){
   // Проверяем, не выбран ли уже "факт ухода"
   const rec = await getRecord(currentDate);
@@ -2124,6 +2187,9 @@ function openModal(title, body){
     return;
   }
   
+  // Сбрасываем currentReportText для обычных модальных окон (не отчетов)
+  currentReportText = null;
+  
   modalTitle.textContent = title;
   modalBody.textContent = body;
   modalBody.style.whiteSpace = 'pre-wrap';
@@ -2137,6 +2203,9 @@ function openModal(title, body){
   modalBack.style.display = 'flex';
   console.log('Модальное окно открыто:', title);
 }
+
+// Переменная для хранения текста отчета (для копирования при закрытии)
+let currentReportText = null;
 
 // Функция открытия отчета с фото
 async function openReportModal(dateFormatted, reportText, photoUrl){
@@ -2153,6 +2222,9 @@ async function openReportModal(dateFormatted, reportText, photoUrl){
     alert('Ошибка: элементы модального окна не найдены');
     return;
   }
+  
+  // Сохраняем текст отчета для копирования при закрытии
+  currentReportText = reportText;
   
   modalTitle.textContent = dateFormatted;
   modalBody.textContent = reportText;
@@ -2273,6 +2345,9 @@ window.openLightbox = openLightbox;
 
 // Открыть модальное окно с HTML контентом (для форм)
 function openModalHTML(title, html){
+  // Сбрасываем currentReportText для модальных окон с HTML (не отчетов)
+  currentReportText = null;
+  
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = html;
   $('#modalBody').style.whiteSpace = 'normal';
@@ -2281,6 +2356,17 @@ function openModalHTML(title, html){
 function closeModal(){
   const modalBack = $('#modalBack');
   if (modalBack) {
+    // Если открыт отчет (currentReportText не null), копируем его в буфер
+    if (currentReportText) {
+      copyToClipboard(currentReportText).then(() => {
+        console.log('Отчёт скопирован в буфер обмена');
+      }).catch(err => {
+        console.error('Ошибка копирования отчета:', err);
+      });
+      // Сбрасываем сохраненный текст отчета
+      currentReportText = null;
+    }
+    
     modalBack.style.display = 'none';
     
     // Сбрасываем состояние секции с фото
@@ -2291,6 +2377,13 @@ function closeModal(){
     }
     if (photoContainer) {
       photoContainer.classList.remove('expanded');
+    }
+    
+    // Восстанавливаем стандартную ширину модального окна
+    const modal = document.querySelector('.modal');
+    if (modal) {
+      modal.style.maxWidth = '720px';
+      modal.style.width = '100%';
     }
   }
 }
