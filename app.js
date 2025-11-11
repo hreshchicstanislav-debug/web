@@ -536,7 +536,11 @@ async function renderMe(){
     </div>
 
     <label>Комментарий</label>
-    <textarea id="comment" rows="3" placeholder="Опционально"></textarea>
+    <div style="position: relative;">
+      <textarea id="comment" rows="3" placeholder="Опционально" style="padding-right: 50px; box-sizing: border-box; width: 100%;"></textarea>
+      <button id="commentConfirm" class="time-confirm-btn" style="display: none; position: absolute; right: 8px; bottom: 8px; z-index: 10;" title="Подтвердить комментарий">✓</button>
+      <span id="commentCheck" class="checkmark" style="position: absolute; right: 8px; bottom: 8px; z-index: 10;">✓</span>
+    </div>
 
     <div class="right">
       <button id="showReport" class="btn">Показать отчёт</button>
@@ -628,7 +632,29 @@ async function renderMe(){
     }
   });
   
-  $('#comment').addEventListener('blur',  e => saveField('comment', e.target.value));
+  // Сохраняем предыдущее значение комментария для проверки изменений
+  window.previousComment = '';
+  
+  // Показываем кнопку подтверждения при изменении комментария
+  $('#comment').addEventListener('input', (e) => {
+    const newValue = e.target.value || '';
+    // Показываем кнопку подтверждения, если есть значение и оно отличается от сохраненного
+    if (newValue !== window.previousComment) {
+      $('#commentConfirm').style.display = 'inline-flex';
+    } else {
+      $('#commentConfirm').style.display = 'none';
+    }
+  });
+  
+  // Кнопка подтверждения для комментария
+  $('#commentConfirm').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const newValue = $('#comment').value || '';
+    window.previousComment = newValue;
+    $('#commentConfirm').style.display = 'none';
+    await saveField('comment', newValue);
+  });
+  
   $('#addBreak').addEventListener('click', openBreakModal);
   $('#addPhoto').addEventListener('click', openPhotoModal);
   $('#showReport').addEventListener('click', showReportForToday);
@@ -645,6 +671,7 @@ async function hydrateMe(rec){
   // когда просто открывается time picker без реального выбора времени
   window.previousInTime = rec.in_time || '';
   window.previousOutTime = rec.out_time || '';
+  window.previousComment = rec.comment || '';
 
   // Блокируем поля после сохранения (если есть значение)
   // Факт прихода блокируется после сохранения
@@ -682,6 +709,7 @@ async function hydrateMe(rec){
   // show checkmarks if times are saved
   $('#inTimeCheck').classList.toggle('visible', !!rec.in_time);
   $('#outTimeCheck').classList.toggle('visible', !!rec.out_time);
+  $('#commentCheck').classList.toggle('visible', !!rec.comment);
   
   // Скрываем кнопки подтверждения при загрузке данных
   const inTimeConfirm = $('#inTimeConfirm');
@@ -799,6 +827,12 @@ async function saveField(field, val){
         $('#addBreak').classList.remove('locked');
         $('#addPhoto').disabled = false;
         $('#addPhoto').classList.remove('locked');
+      }
+    } else if (field === 'comment') {
+      if (val) {
+        $('#commentCheck').classList.add('visible');
+      } else {
+        $('#commentCheck').classList.remove('visible');
       }
     }
     

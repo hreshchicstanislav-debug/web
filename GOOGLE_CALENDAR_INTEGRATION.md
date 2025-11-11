@@ -57,36 +57,9 @@ Google Calendar → Supabase (таблица shootings) → TimeTracker (экр�
    - `https://www.googleapis.com/auth/calendar.readonly` (для чтения календаря)
 5. Сохраните и продолжите
 
-## Шаг 3: Выбор способа синхронизации
+## Шаг 3: Реализация синхронизации через Google Apps Script
 
-Есть два основных способа синхронизации данных из Google Calendar:
-
-### Вариант A: Google Apps Script (рекомендуется для простоты)
-
-**Преимущества:**
-- Не требует отдельного сервера
-- Бесплатно
-- Простая настройка
-- Автоматическая синхронизация по расписанию
-
-**Недостатки:**
-- Ограничения по времени выполнения (6 минут)
-- Меньше гибкости
-
-### Вариант B: Отдельный сервер (Node.js/Python)
-
-**Преимущества:**
-- Полный контроль
-- Больше гибкости
-- Можно использовать webhooks
-
-**Недостатки:**
-- Требует отдельный сервер
-- Более сложная настройка
-
-## Шаг 4: Реализация синхронизации (Вариант A - Google Apps Script)
-
-### 4.1. Создание скрипта
+### 3.1. Создание скрипта
 
 1. Откройте [Google Apps Script](https://script.google.com)
 2. Создайте новый проект
@@ -95,7 +68,11 @@ Google Calendar → Supabase (таблица shootings) → TimeTracker (экр�
 ```javascript
 // Конфигурация
 const SUPABASE_URL = 'https://ваш-проект.supabase.co';
-const SUPABASE_ANON_KEY = 'ваш-anon-key';
+
+// ВАЖНО: Для Google Apps Script используйте SERVICE_ROLE_KEY, а не ANON_KEY!
+// Anon key используется только на сайте (в браузере), а Apps Script работает как сервер
+// Service Role Key можно получить в Supabase Dashboard → Project Settings → API
+const SUPABASE_SERVICE_ROLE_KEY = 'ваш-service-role-key';
 
 // ВАЖНО: Укажите ID календаря для съёмок
 // Вариант 1: Использовать основной календарь
@@ -107,7 +84,11 @@ const CALENDAR_ID = 'primary';
 // 2. Настройки календаря → выберите нужный календарь
 // 3. В разделе "Интеграция календаря" найдите "Идентификатор календаря"
 // 4. Скопируйте email-адрес (например: abc123@group.calendar.google.com)
+// Раскомментируйте следующую строку и укажите ваш ID календаря:
 // const CALENDAR_ID = 'ваш-email-календаря@group.calendar.google.com';
+
+// ВАЖНО: Убедитесь, что CALENDAR_ID определена! Если используете отдельный календарь,
+// раскомментируйте строку выше и укажите правильный ID календаря.
 
 // ОПЦИОНАЛЬНО: Фильтрация по цвету события
 // Если вы используете определенный цвет для съёмок, укажите его здесь
@@ -126,6 +107,15 @@ function syncShootings() {
   try {
     Logger.log('Начало синхронизации...');
     
+    // Проверяем, что CALENDAR_ID определена
+    if (typeof CALENDAR_ID === 'undefined' || !CALENDAR_ID) {
+      Logger.log('КРИТИЧЕСКАЯ ОШИБКА: CALENDAR_ID не определена!');
+      Logger.log('Укажите CALENDAR_ID в конфигурации перед функцией syncShootings()');
+      Logger.log('Например: const CALENDAR_ID = \'primary\';');
+      Logger.log('Или: const CALENDAR_ID = \'ваш-email@group.calendar.google.com\';');
+      return;
+    }
+    
     // Получаем календарь
     let calendar;
     try {
@@ -134,6 +124,7 @@ function syncShootings() {
     } catch (error) {
       Logger.log('ОШИБКА: Не удалось найти календарь с ID: ' + CALENDAR_ID);
       Logger.log('Проверьте правильность CALENDAR_ID в конфигурации');
+      Logger.log('Ошибка: ' + error.toString());
       return;
     }
     
@@ -247,8 +238,8 @@ function deleteOldShootings(now) {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
       },
       muteHttpExceptions: true
     };
@@ -277,8 +268,8 @@ function deleteRemovedShootings(calendarEventIds, now) {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
       },
       muteHttpExceptions: true
     };
@@ -331,8 +322,8 @@ function deleteRemovedShootings(calendarEventIds, now) {
           method: 'DELETE',
           headers: {
             'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
           },
           muteHttpExceptions: true
         };
@@ -375,11 +366,12 @@ function sendToSupabase(shootingData) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       'Prefer': 'return=minimal'
     },
-    payload: JSON.stringify(shootingData)
+    payload: JSON.stringify(shootingData),
+    muteHttpExceptions: true
   };
   
   try {
@@ -389,6 +381,11 @@ function sendToSupabase(shootingData) {
     // 201 - создана новая запись
     if (responseCode === 201 || responseCode === 200 || responseCode === 204) {
       Logger.log('✓ Новая запись успешно создана через POST для ID: ' + shootingData.google_event_id);
+      return true;
+    } else if (responseCode === 409) {
+      // Конфликт - запись уже существует (может произойти при параллельных запросах)
+      // Это нормально, запись уже есть в базе
+      Logger.log('→ Запись уже существует (409), считаем успешным для ID: ' + shootingData.google_event_id);
       return true;
     } else {
       const responseText = response.getContentText();
@@ -405,41 +402,63 @@ function sendToSupabase(shootingData) {
 
 // Функция для обновления существующей записи через PATCH
 function updateExistingShooting(shootingData) {
-  // Экранируем google_event_id для URL (на случай специальных символов)
-  const eventId = encodeURIComponent(shootingData.google_event_id);
-  const url = `${SUPABASE_URL}/rest/v1/shootings?google_event_id=eq.${eventId}`;
-  
-  const options = {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-      'Prefer': 'return=minimal'
-    },
-    payload: JSON.stringify(shootingData),
-    muteHttpExceptions: true // Не выбрасывать исключение при ошибках HTTP
-  };
-  
   try {
-    const response = UrlFetchApp.fetch(url, options);
-    const responseCode = response.getResponseCode();
+    // 1) Сначала проверяем, существует ли запись через GET
+    const checkUrl = `${SUPABASE_URL}/rest/v1/shootings?select=id&google_event_id=eq.${encodeURIComponent(shootingData.google_event_id)}`;
     
-    if (responseCode === 200 || responseCode === 204) {
-      Logger.log('✓ Запись успешно обновлена через PATCH для ID: ' + shootingData.google_event_id);
-      return true;
-    } else if (responseCode === 404) {
-      // Запись не найдена - это нормально, будем создавать новую
-      Logger.log('→ Запись не найдена (404), будет создана новая для ID: ' + shootingData.google_event_id);
-      return false;
-    } else {
-      const responseText = response.getContentText();
-      Logger.log('✗ Ошибка обновления через PATCH (код ' + responseCode + ') для ID: ' + shootingData.google_event_id);
-      Logger.log('Ответ сервера: ' + responseText);
+    const checkOptions = {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+      },
+      muteHttpExceptions: true
+    };
+    
+    const checkResp = UrlFetchApp.fetch(checkUrl, checkOptions);
+    const checkCode = checkResp.getResponseCode();
+    
+    if (checkCode !== 200) {
+      Logger.log('→ Ошибка проверки существования записи (код ' + checkCode + '): ' + checkResp.getContentText());
+      return false; // Записи нет или ошибка - нужно создать через POST
+    }
+    
+    const existing = JSON.parse(checkResp.getContentText());
+    
+    if (!Array.isArray(existing) || existing.length === 0) {
+      // Записи нет — нужно создать через POST
+      Logger.log('→ Запись не найдена через GET, будет создана через POST для ID: ' + shootingData.google_event_id);
       return false;
     }
-  } catch (error) {
-    Logger.log('Ошибка обновления через PATCH: ' + error.toString());
+    
+    // 2) Запись существует — выполняем PATCH для обновления
+    const url = `${SUPABASE_URL}/rest/v1/shootings?google_event_id=eq.${encodeURIComponent(shootingData.google_event_id)}`;
+    
+    const options = {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      payload: JSON.stringify(shootingData),
+      muteHttpExceptions: true
+    };
+    
+    const response = UrlFetchApp.fetch(url, options);
+    const code = response.getResponseCode();
+    
+    if (code === 204 || code === 200) {
+      Logger.log('✓ Обновление через PATCH успешно для ID: ' + shootingData.google_event_id);
+      return true;
+    }
+    
+    Logger.log('✗ PATCH вернул код ' + code + ' для ID: ' + shootingData.google_event_id + '. Ответ: ' + response.getContentText());
+    return false;
+  } catch (err) {
+    Logger.log('Ошибка в updateExistingShooting: ' + err.toString());
     return false;
   }
 }
@@ -464,14 +483,16 @@ function setupTrigger() {
 }
 ```
 
-### 4.2. Настройка скрипта
+### 3.2. Настройка скрипта
 
-1. Замените `SUPABASE_URL` и `SUPABASE_ANON_KEY` на ваши значения из Supabase
-2. Настройте `CALENDAR_ID` (см. раздел 4.3)
-3. Настройте фильтрацию (если нужно) — см. раздел 4.3
+1. Замените `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` на ваши значения из Supabase
+   - **ВАЖНО:** Используйте **Service Role Key**, а не Anon Key!
+   - Service Role Key можно получить в Supabase Dashboard → Project Settings → API
+2. Настройте `CALENDAR_ID` (см. раздел 3.3)
+3. Настройте фильтрацию (если нужно) — см. раздел 3.3
 4. Сохраните проект
 
-### 4.3. Настройка конфигурации
+### 3.3. Настройка конфигурации
 
 **ВАЖНО:** Перед запуском проверьте настройки:
 
@@ -490,14 +511,14 @@ function setupTrigger() {
 3. **FILTER_BY_COLOR** — оставьте `null`, если не используете цвет для фильтрации
    - Если используете определенный цвет для съёмок, укажите его (например: `'peacock'`)
 
-### 4.4. Запуск синхронизации
+### 3.4. Запуск синхронизации
 
 1. Выберите функцию `syncShootings` в выпадающем списке
 2. Нажмите **Run** (▶️)
 3. Разрешите доступ к календарю при первом запуске
 4. Проверьте логи выполнения (см. раздел "Отладка" ниже)
 
-### 4.5. Настройка автоматической синхронизации
+### 3.5. Настройка автоматической синхронизации
 
 После успешного ручного запуска настройте автоматическую синхронизацию:
 
@@ -505,7 +526,7 @@ function setupTrigger() {
 2. Нажмите **Run** (▶️)
 3. После настройки триггера синхронизация будет происходить автоматически каждый час
 
-### 4.6. Отладка и проверка
+### 3.6. Отладка и проверка
 
 Если синхронизируется ноль съёмок или новая съёмка не появляется:
 
@@ -523,7 +544,8 @@ function setupTrigger() {
    - Убедитесь, что `CALENDAR_ID` указан правильно
    - Убедитесь, что `KEYWORDS = []` (пустой массив) для синхронизации всех событий
    - Убедитесь, что `FILTER_BY_COLOR = null` (если не используете фильтрацию по цвету)
-   - Проверьте, что `SUPABASE_URL` и `SUPABASE_ANON_KEY` указаны правильно
+   - Проверьте, что `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` указаны правильно
+   - **ВАЖНО:** Используйте **Service Role Key**, а не Anon Key для Google Apps Script!
 
 3. **Проверьте календарь:**
    - Убедитесь, что в календаре есть будущие события (начиная с сегодняшнего дня)
@@ -546,221 +568,7 @@ function setupTrigger() {
    - Проверьте логи — там будет видно, сколько съёмок найдено для удаления
    - Убедитесь, что функция `deleteRemovedShootings` вызывается после синхронизации
 
-## Шаг 5: Альтернативный вариант - Node.js сервер
-
-Если вы предпочитаете использовать отдельный сервер, создайте Node.js приложение:
-
-### 5.1. Установка зависимостей
-
-```bash
-npm init -y
-npm install googleapis @supabase/supabase-js node-cron
-```
-
-### 5.2. Создание файла `sync-calendar.js`
-
-```javascript
-const { google } = require('googleapis');
-const { createClient } = require('@supabase/supabase-js');
-const cron = require('node-cron');
-
-// Конфигурация
-const SUPABASE_URL = 'https://ваш-проект.supabase.co';
-const SUPABASE_ANON_KEY = 'ваш-anon-key';
-const GOOGLE_CLIENT_ID = 'ваш-client-id.apps.googleusercontent.com';
-const GOOGLE_CLIENT_SECRET = 'ваш-client-secret';
-const GOOGLE_REDIRECT_URI = 'http://localhost:3000/auth/callback';
-const CALENDAR_ID = 'primary'; // или email вашего календаря для съёмок
-
-// ОПЦИОНАЛЬНО: Фильтрация по ключевым словам
-// Оставьте пустым массив [], чтобы брать ВСЕ события из календаря
-const KEYWORDS = []; // например: ['съёмка', 'shooting', 'фото']
-
-// Инициализация Supabase
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// Инициализация Google OAuth
-const oauth2Client = new google.auth.OAuth2(
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  GOOGLE_REDIRECT_URI
-);
-
-// Функция для получения токена доступа
-// ВАЖНО: При первом запуске нужно получить токен через OAuth flow
-async function getAccessToken() {
-  // Здесь должен быть сохраненный refresh token
-  // Для получения токена используйте OAuth flow один раз
-  const refreshToken = 'ваш-refresh-token'; // Сохраните после первого OAuth
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-  const { credentials } = await oauth2Client.refreshAccessToken();
-  return credentials.access_token;
-}
-
-// Функция синхронизации
-async function syncShootings() {
-  try {
-    console.log('Начало синхронизации...');
-    
-    const accessToken = await getAccessToken();
-    oauth2Client.setCredentials({ access_token: accessToken });
-    
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    
-    const now = new Date();
-    const futureDate = new Date();
-    futureDate.setMonth(futureDate.getMonth() + 3);
-    
-    console.log('Получаем события с', now.toISOString(), 'по', futureDate.toISOString());
-    
-    // Получаем только будущие события (начиная с текущего момента)
-    const response = await calendar.events.list({
-      calendarId: CALENDAR_ID,
-      timeMin: now.toISOString(), // Только события начиная с текущего момента
-      timeMax: futureDate.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
-    
-    const events = response.data.items || [];
-    console.log('Найдено событий в календаре:', events.length);
-    
-    // Фильтруем съёмки и проверяем, что событие еще не закончилось
-    const shootings = events.filter(event => {
-      const end = new Date(event.end.dateTime || event.end.date);
-      // Пропускаем события, которые уже закончились
-      if (end < now) {
-        return false;
-      }
-      
-      // Фильтрация по ключевым словам (если указаны)
-      if (KEYWORDS.length > 0) {
-        const title = (event.summary || '').toLowerCase();
-        const description = (event.description || '').toLowerCase();
-        const hasKeyword = KEYWORDS.some(keyword => 
-          title.includes(keyword.toLowerCase()) || description.includes(keyword.toLowerCase())
-        );
-        if (!hasKeyword) {
-          return false;
-        }
-      }
-      
-      return true;
-    });
-    
-    console.log('Отфильтровано съёмок:', shootings.length);
-    
-    // Отправляем в Supabase
-    let successCount = 0;
-    let errorCount = 0;
-    
-    for (const event of shootings) {
-      try {
-        const start = new Date(event.start.dateTime || event.start.date);
-        const end = new Date(event.end.dateTime || event.end.date);
-        
-        // ВАЖНО: Время берется из выбранного времени события (start и end),
-        // а НЕ из названия события
-        const shootingData = {
-          date: start.toISOString().split('T')[0],
-          start_time: start.toTimeString().split(' ')[0],
-          end_time: end.toTimeString().split(' ')[0],
-          title: event.summary || 'Съёмка',
-          description: event.description || '',
-          google_event_id: event.id
-        };
-        
-        console.log('Синхронизируем:', shootingData.date, shootingData.start_time + '-' + shootingData.end_time, '-', shootingData.title);
-        
-        const { error } = await supabase
-          .from('shootings')
-          .upsert(shootingData, { onConflict: 'google_event_id' });
-        
-        if (error) {
-          console.error('Ошибка сохранения:', error);
-          errorCount++;
-        } else {
-          successCount++;
-        }
-      } catch (error) {
-        console.error('Ошибка обработки события:', error);
-        errorCount++;
-      }
-    }
-    
-    // Удаляем старые съёмки из базы (которые уже прошли)
-    await deleteOldShootings(now);
-    
-    console.log('=== Результат синхронизации ===');
-    console.log('Успешно синхронизировано:', successCount);
-    console.log('Ошибок:', errorCount);
-    console.log('Всего съёмок:', shootings.length);
-  } catch (error) {
-    console.error('КРИТИЧЕСКАЯ ОШИБКА синхронизации:', error);
-    console.error('Стек ошибки:', error.stack);
-  }
-}
-
-// Функция для удаления прошедших съёмок из базы
-async function deleteOldShootings(now) {
-  try {
-    const today = now.toISOString().split('T')[0];
-    
-    const { error } = await supabase
-      .from('shootings')
-      .delete()
-      .lt('date', today);
-    
-    if (error) {
-      console.error('Ошибка удаления старых съёмок:', error);
-    } else {
-      console.log('Старые съёмки удалены');
-    }
-  } catch (error) {
-    console.error('Ошибка удаления старых съёмок:', error);
-  }
-}
-
-// Запуск синхронизации каждый час
-cron.schedule('0 * * * *', syncShootings);
-
-// Первый запуск
-syncShootings();
-```
-
-### 5.3. Получение OAuth токена (один раз)
-
-Для получения refresh token используйте этот код:
-
-```javascript
-const { google } = require('googleapis');
-
-const GOOGLE_CLIENT_ID = 'ваш-client-id.apps.googleusercontent.com';
-const GOOGLE_CLIENT_SECRET = 'ваш-client-secret';
-const GOOGLE_REDIRECT_URI = 'http://localhost:3000/auth/callback';
-
-const oauth2Client = new google.auth.OAuth2(
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  GOOGLE_REDIRECT_URI
-);
-
-// Получите URL для авторизации
-const authUrl = oauth2Client.generateAuthUrl({
-  access_type: 'offline',
-  scope: ['https://www.googleapis.com/auth/calendar.readonly'],
-});
-
-console.log('Откройте этот URL в браузере:', authUrl);
-console.log('После авторизации вставьте код из URL сюда:');
-
-// После получения кода:
-const code = 'код-из-url';
-const { tokens } = await oauth2Client.getToken(code);
-console.log('Refresh token:', tokens.refresh_token);
-```
-
-## Шаг 6: Проверка работы
+## Шаг 4: Проверка работы
 
 1. Откройте экран начальника на сайте TimeTracker
 2. Нажмите кнопку **"Показать съёмки"**
@@ -788,7 +596,6 @@ console.log('Refresh token:', tokens.refresh_token);
 ### Проверка логов
 
 - **Google Apps Script**: Откройте **Executions** в редакторе скрипта
-- **Node.js**: Проверьте консоль сервера
 
 ## Поддержка
 
