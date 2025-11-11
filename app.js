@@ -644,7 +644,19 @@ async function renderMe(){
   window.previousComment = '';
   
   // Открываем модальное окно при клике на поле комментария
+  // Но только если комментарий не сохранен (нет галочки)
   $('#comment').addEventListener('click', () => {
+    // Проверяем, сохранен ли комментарий (есть ли видимая галочка)
+    const commentCheck = $('#commentCheck');
+    const isSaved = commentCheck && commentCheck.classList.contains('visible');
+    
+    if (isSaved) {
+      // Комментарий уже сохранен - нельзя редактировать
+      // Можно показать сообщение или просто не открывать окно
+      return;
+    }
+    
+    // Комментарий не сохранен - можно редактировать
     openCommentModal();
   });
   
@@ -1222,13 +1234,13 @@ async function showReportForToday(){
 
 // Функция открытия модального окна для редактирования комментария
 async function openCommentModal(){
-  const rec = await getRecord(currentDate);
-  const currentComment = rec.comment || '';
+  // Получаем текущее значение комментария из поля (может быть несохраненное)
+  const currentCommentValue = $('#comment') ? $('#comment').value || '' : '';
   
   const modalHTML = `
     <div style="margin-bottom: 16px;">
       <label style="display: block; margin-bottom: 8px;">Комментарий</label>
-      <textarea id="commentTextarea" rows="6" placeholder="Введите комментарий..." style="width: 100%; padding: 12px; border: 1px solid var(--border-default); border-radius: 8px; font-size: 15px; font-family: inherit; resize: vertical; box-sizing: border-box;">${currentComment}</textarea>
+      <textarea id="commentTextarea" rows="6" placeholder="Введите комментарий..." style="width: 100%; padding: 12px; border: 1px solid var(--border-default); border-radius: 8px; font-size: 15px; font-family: inherit; resize: vertical; box-sizing: border-box;">${currentCommentValue}</textarea>
     </div>
     <div style="display: flex; justify-content: space-between; gap: 12px; margin-top: 16px;">
       <button id="commentReset" class="btn" style="flex: 1;">Сбросить</button>
@@ -1236,19 +1248,40 @@ async function openCommentModal(){
     </div>
   `;
   
-  openModalHTML('Комментарий', modalHTML);
+  openModalHTML('Комментарий', modalHTML, true); // true = скрыть кнопку "Закрыть"
   
-  // Устанавливаем ширину модального окна равной ширине одного поля времени (примерно 50% от row минус gap)
+  // Устанавливаем ширину модального окна для комментария
   const modal = document.querySelector('.modal');
+  const modalBack = $('#modalBack');
   if (modal) {
-    // Вычисляем ширину одного поля времени из .row
-    const rowElement = document.querySelector('.row');
-    if (rowElement) {
-      const rowWidth = rowElement.offsetWidth;
-      const gap = 12; // gap из .row
-      const fieldWidth = (rowWidth - gap) / 2; // ширина одного поля
-      modal.style.maxWidth = fieldWidth + 'px';
-      modal.style.width = 'auto';
+    // В мобильной версии - на всю ширину с отступами (как принято в индустрии)
+    // В десктопной - ширина одного поля времени
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile) {
+      // Мобильная версия: на всю ширину с отступами 16px с каждой стороны
+      // modal-back уже имеет padding: 24px, поэтому используем его
+      // Но для комментария делаем отступы 16px (как принято в индустрии)
+      if (modalBack) {
+        modalBack.style.padding = '16px';
+      }
+      modal.style.maxWidth = '100%';
+      modal.style.width = '100%';
+      modal.style.margin = '0';
+    } else {
+      // Десктопная версия: ширина одного поля времени
+      // Восстанавливаем стандартный padding для modal-back
+      if (modalBack) {
+        modalBack.style.padding = '24px';
+      }
+      const rowElement = document.querySelector('.row');
+      if (rowElement) {
+        const rowWidth = rowElement.offsetWidth;
+        const gap = 12; // gap из .row
+        const fieldWidth = (rowWidth - gap) / 2; // ширина одного поля
+        modal.style.maxWidth = fieldWidth + 'px';
+        modal.style.width = 'auto';
+        modal.style.margin = '0';
+      }
     }
   }
   
@@ -1259,6 +1292,14 @@ async function openCommentModal(){
   // Кнопка "Сбросить"
   commentReset.addEventListener('click', () => {
     commentTextarea.value = '';
+    // Обновляем поле комментария на главном экране
+    $('#comment').value = '';
+    // Скрываем кнопку подтверждения
+    $('#commentConfirm').style.display = 'none';
+    // Обновляем предыдущее значение
+    window.previousComment = '';
+    // Закрываем модальное окно
+    closeModal();
   });
   
   // Кнопка "Готово"
@@ -1266,7 +1307,7 @@ async function openCommentModal(){
     const newValue = commentTextarea.value.trim();
     // Обновляем поле комментария на главном экране
     $('#comment').value = newValue;
-    // Показываем кнопку подтверждения, если есть текст
+    // Показываем кнопку подтверждения, если есть текст и он отличается от сохраненного
     if (newValue && newValue !== window.previousComment) {
       $('#commentConfirm').style.display = 'inline-flex';
     } else {
@@ -1279,6 +1320,10 @@ async function openCommentModal(){
   // Фокус на textarea при открытии
   setTimeout(() => {
     commentTextarea.focus();
+    // Прокручиваем в конец текста, если он есть
+    if (commentTextarea.value) {
+      commentTextarea.setSelectionRange(commentTextarea.value.length, commentTextarea.value.length);
+    }
   }, 100);
 }
 
@@ -2187,8 +2232,9 @@ function openModal(title, body){
     return;
   }
   
-  // Сбрасываем currentReportText для обычных модальных окон (не отчетов)
+  // Сбрасываем currentReportText и currentReportDate для обычных модальных окон (не отчетов)
   currentReportText = null;
+  currentReportDate = null;
   
   modalTitle.textContent = title;
   modalBody.textContent = body;
@@ -2204,8 +2250,9 @@ function openModal(title, body){
   console.log('Модальное окно открыто:', title);
 }
 
-// Переменная для хранения текста отчета (для копирования при закрытии)
+// Переменные для хранения данных отчета (для копирования при закрытии)
 let currentReportText = null;
+let currentReportDate = null;
 
 // Функция открытия отчета с фото
 async function openReportModal(dateFormatted, reportText, photoUrl){
@@ -2223,8 +2270,9 @@ async function openReportModal(dateFormatted, reportText, photoUrl){
     return;
   }
   
-  // Сохраняем текст отчета для копирования при закрытии
+  // Сохраняем текст отчета и дату для копирования при закрытии
   currentReportText = reportText;
+  currentReportDate = dateFormatted;
   
   modalTitle.textContent = dateFormatted;
   modalBody.textContent = reportText;
@@ -2343,28 +2391,51 @@ function openLightbox(photoUrl){
 // Делаем функцию доступной глобально
 window.openLightbox = openLightbox;
 
+// Переменная для отслеживания типа модального окна (для скрытия кнопки "Закрыть")
+let currentModalType = null;
+
 // Открыть модальное окно с HTML контентом (для форм)
-function openModalHTML(title, html){
-  // Сбрасываем currentReportText для модальных окон с HTML (не отчетов)
+function openModalHTML(title, html, hideCloseButton = false){
+  // Сбрасываем currentReportText и currentReportDate для модальных окон с HTML (не отчетов)
   currentReportText = null;
+  currentReportDate = null;
+  
+  // Сохраняем тип модального окна
+  currentModalType = hideCloseButton ? 'comment' : null;
   
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = html;
   $('#modalBody').style.whiteSpace = 'normal';
   $('#modalBack').style.display = 'flex';
+  
+  // Скрываем кнопку "Закрыть" для модального окна комментария
+  const modalClose = $('#modalClose');
+  if (modalClose) {
+    if (hideCloseButton) {
+      modalClose.style.display = 'none';
+    } else {
+      modalClose.style.display = 'block';
+    }
+  }
 }
 function closeModal(){
   const modalBack = $('#modalBack');
   if (modalBack) {
-    // Если открыт отчет (currentReportText не null), копируем его в буфер
+    // Если открыт отчет (currentReportText не null), копируем его в буфер с датой
     if (currentReportText) {
-      copyToClipboard(currentReportText).then(() => {
+      // Формируем полный текст для копирования: дата + пустая строка + текст отчета
+      const fullText = currentReportDate 
+        ? `${currentReportDate}\n\n${currentReportText}`
+        : currentReportText;
+      
+      copyToClipboard(fullText).then(() => {
         console.log('Отчёт скопирован в буфер обмена');
       }).catch(err => {
         console.error('Ошибка копирования отчета:', err);
       });
-      // Сбрасываем сохраненный текст отчета
+      // Сбрасываем сохраненные данные отчета
       currentReportText = null;
+      currentReportDate = null;
     }
     
     modalBack.style.display = 'none';
@@ -2384,7 +2455,23 @@ function closeModal(){
     if (modal) {
       modal.style.maxWidth = '720px';
       modal.style.width = '100%';
+      modal.style.margin = '0';
     }
+    
+    // Восстанавливаем стандартный padding для modal-back
+    const modalBack = $('#modalBack');
+    if (modalBack) {
+      modalBack.style.padding = '24px';
+    }
+    
+    // Восстанавливаем видимость кнопки "Закрыть"
+    const modalClose = $('#modalClose');
+    if (modalClose) {
+      modalClose.style.display = 'block';
+    }
+    
+    // Сбрасываем тип модального окна
+    currentModalType = null;
   }
 }
 
