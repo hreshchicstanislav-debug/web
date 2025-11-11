@@ -545,7 +545,7 @@ async function renderMe(){
 
     <label>Комментарий</label>
     <div class="time-wrapper">
-      <input id="comment" type="text" placeholder="Опционально" readonly style="cursor: pointer;">
+      <input id="comment" type="text" placeholder="Опционально" readonly style="cursor: pointer;" autocomplete="off" inputmode="none">
       <button id="commentConfirm" class="time-confirm-btn" style="display: none;" title="Подтвердить комментарий">✓</button>
       <span id="commentCheck" class="checkmark">✓</span>
     </div>
@@ -643,20 +643,59 @@ async function renderMe(){
   // Сохраняем предыдущее значение комментария для проверки изменений
   window.previousComment = '';
   
-  // Открываем модальное окно при клике на поле комментария
+  // Открываем модальное окно при клике/тапе на поле комментария
   // Но только если комментарий не сохранен (нет галочки)
-  $('#comment').addEventListener('click', () => {
+  const commentField = $('#comment');
+  
+  // Обработчик для клика (десктоп и мобильные)
+  commentField.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
     // Проверяем, сохранен ли комментарий (есть ли видимая галочка)
     const commentCheck = $('#commentCheck');
     const isSaved = commentCheck && commentCheck.classList.contains('visible');
     
     if (isSaved) {
       // Комментарий уже сохранен - нельзя редактировать
-      // Можно показать сообщение или просто не открывать окно
       return;
     }
     
     // Комментарий не сохранен - можно редактировать
+    openCommentModal();
+  });
+  
+  // Обработчик для touchstart (мобильные устройства) - предотвращает автозаполнение
+  commentField.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Проверяем, сохранен ли комментарий
+    const commentCheck = $('#commentCheck');
+    const isSaved = commentCheck && commentCheck.classList.contains('visible');
+    
+    if (isSaved) {
+      return;
+    }
+    
+    // Открываем модальное окно
+    openCommentModal();
+  });
+  
+  // Обработчик для focus - предотвращает показ клавиатуры и автозаполнения
+  commentField.addEventListener('focus', (e) => {
+    e.preventDefault();
+    e.target.blur(); // Убираем фокус сразу
+    
+    // Проверяем, сохранен ли комментарий
+    const commentCheck = $('#commentCheck');
+    const isSaved = commentCheck && commentCheck.classList.contains('visible');
+    
+    if (isSaved) {
+      return;
+    }
+    
+    // Открываем модальное окно
     openCommentModal();
   });
   
@@ -1228,8 +1267,8 @@ async function showReportForToday(){
   const carryPrevText = mmToHhmm(carryPrev);
   const rep = buildReport(rec, carryPrevText);
   const dateFormatted = formatDate(currentDate);
-  openModal(dateFormatted, rep);
-  copyToClipboard(rep).then(()=>console.log('Отчёт скопирован'));
+  // Используем openReportModal для сохранения даты для копирования
+  openReportModal(dateFormatted, rep, null);
 }
 
 // Функция открытия модального окна для редактирования комментария
@@ -1253,26 +1292,22 @@ async function openCommentModal(){
   // Устанавливаем ширину модального окна для комментария
   const modal = document.querySelector('.modal');
   const modalBack = $('#modalBack');
-  if (modal) {
-    // В мобильной версии - на всю ширину с отступами (как принято в индустрии)
-    // В десктопной - ширина одного поля времени
-    const isMobile = window.innerWidth <= 768;
+  if (modal && modalBack) {
+    // Определяем мобильную версию более точно (включая PWA)
+    const isMobile = window.innerWidth <= 768 || 
+                     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                     (window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+    
     if (isMobile) {
-      // Мобильная версия: на всю ширину с отступами 16px с каждой стороны
-      // modal-back уже имеет padding: 24px, поэтому используем его
-      // Но для комментария делаем отступы 16px (как принято в индустрии)
-      if (modalBack) {
-        modalBack.style.padding = '16px';
-      }
+      // Мобильная версия: на всю ширину с отступами 16px с каждой стороны (как принято в индустрии)
+      modalBack.style.padding = '16px';
       modal.style.maxWidth = '100%';
       modal.style.width = '100%';
       modal.style.margin = '0';
+      modal.style.borderRadius = '12px'; // Более скругленные углы для мобильных
     } else {
       // Десктопная версия: ширина одного поля времени
-      // Восстанавливаем стандартный padding для modal-back
-      if (modalBack) {
-        modalBack.style.padding = '24px';
-      }
+      modalBack.style.padding = '24px';
       const rowElement = document.querySelector('.row');
       if (rowElement) {
         const rowWidth = rowElement.offsetWidth;
