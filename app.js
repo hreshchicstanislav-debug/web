@@ -69,6 +69,39 @@ function mmToHhmm(mm){
   mm = Math.abs(mm);
   return `${sign}${pad(Math.floor(mm/60))}:${pad(mm%60)}`;
 }
+// Функция для расчета времени окончания работы для выхода в ноль
+// Формула: время прихода + 9 часов (540 минут) - остаток с прошлого дня
+function updateTargetEndTime(inTime, carryPrevMinutes) {
+  const targetEndTimeEl = $('#targetEndTime');
+  if (!targetEndTimeEl) return;
+  
+  // Если время прихода не заполнено, скрываем поле
+  if (!inTime) {
+    targetEndTimeEl.textContent = '';
+    return;
+  }
+  
+  // План работы: 9 часов = 540 минут (09:00 - 18:00)
+  const PLAN_HOURS = 9;
+  const PLAN_MINUTES = PLAN_HOURS * 60;
+  
+  // Время прихода в минутах
+  const inTimeMinutes = toMinutes(inTime);
+  
+  // Время окончания для выхода в ноль:
+  // время прихода + план работы - остаток с прошлого дня
+  // Если остаток положительный (переработка), можно уйти раньше
+  // Если остаток отрицательный (недоработка), нужно работать дольше
+  const targetEndMinutes = inTimeMinutes + PLAN_MINUTES - carryPrevMinutes;
+  
+  // Преобразуем обратно в формат HH:MM
+  const hours = Math.floor(targetEndMinutes / 60) % 24;
+  const minutes = targetEndMinutes % 60;
+  const targetEndTime = `${pad(hours)}:${pad(minutes)}`;
+  
+  // Обновляем поле с иконкой часов
+  targetEndTimeEl.textContent = `⏱ ${targetEndTime}`;
+}
 function copyToClipboard(t){
   if(navigator.clipboard) return navigator.clipboard.writeText(t);
   const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select();
@@ -508,7 +541,10 @@ async function renderMe(){
       <p class="muted" style="margin-top: 8px; margin-bottom: 0; font-size: 12px;">Выберите дату для работы с отчетами за разные дни</p>
     </div>
 
-    <p class="muted" id="carryPrevText">Остаток с прошлого дня — "..."</p>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+      <p class="muted" id="carryPrevText" style="margin: 0;">Остаток с прошлого дня — "..."</p>
+      <p class="muted" id="targetEndTime" style="margin: 0; text-align: right; font-weight: 500;"></p>
+    </div>
 
     <div class="row">
       <div>
@@ -577,13 +613,30 @@ async function renderMe(){
   // Это решает проблему на мобильных устройствах, где time picker может сразу закрываться
   
   // Показываем кнопку подтверждения при изменении времени
-  $('#inTime').addEventListener('change', (e) => {
+  $('#inTime').addEventListener('change', async (e) => {
     const newValue = e.target.value || '';
     // Показываем кнопку подтверждения, если есть значение и оно отличается от сохраненного
     if (newValue && newValue !== window.previousInTime) {
       $('#inTimeConfirm').style.display = 'inline-flex';
     } else {
       $('#inTimeConfirm').style.display = 'none';
+    }
+    // Обновляем время окончания работы при изменении времени прихода (предварительный расчет)
+    if (newValue) {
+      const prev = await getPrevDayRecord(currentDate).catch(() => null);
+      let carryPrev = 0;
+      if (prev && prev.date && typeof prev.carry_new_min === 'number' && !isNaN(prev.carry_new_min)) {
+        const MAX_REASONABLE_MINUTES = 100000;
+        const MIN_REASONABLE_MINUTES = -100000;
+        if (prev.carry_new_min > MAX_REASONABLE_MINUTES || prev.carry_new_min < MIN_REASONABLE_MINUTES) {
+          carryPrev = 0;
+        } else {
+          carryPrev = Math.round(prev.carry_new_min);
+        }
+      }
+      updateTargetEndTime(newValue, carryPrev);
+    } else {
+      updateTargetEndTime('', 0);
     }
   });
   
@@ -605,6 +658,19 @@ async function renderMe(){
       window.previousInTime = newValue;
       $('#inTimeConfirm').style.display = 'none';
       await saveField('in_time', newValue);
+      // Обновляем время окончания работы после сохранения времени прихода
+      const prev = await getPrevDayRecord(currentDate).catch(() => null);
+      let carryPrev = 0;
+      if (prev && prev.date && typeof prev.carry_new_min === 'number' && !isNaN(prev.carry_new_min)) {
+        const MAX_REASONABLE_MINUTES = 100000;
+        const MIN_REASONABLE_MINUTES = -100000;
+        if (prev.carry_new_min > MAX_REASONABLE_MINUTES || prev.carry_new_min < MIN_REASONABLE_MINUTES) {
+          carryPrev = 0;
+        } else {
+          carryPrev = Math.round(prev.carry_new_min);
+        }
+      }
+      updateTargetEndTime(newValue, carryPrev);
     }
   });
   
@@ -819,6 +885,9 @@ async function hydrateMe(rec){
   }
   
   $('#carryPrevText').textContent = `Остаток с прошлого дня — "${mmToHhmm(carryPrevMin)}"`;
+  
+  // Обновляем время окончания работы для выхода в ноль
+  updateTargetEndTime(rec.in_time, carryPrevMin);
 
   // breaks list
   renderBreaksList(rec.breaks_json);
@@ -1004,6 +1073,10 @@ async function recalculateBalance(){
   if (carryPrevTextEl) {
     carryPrevTextEl.textContent = `Остаток с прошлого дня — "${mmToHhmm(carryPrev)}"`;
   }
+  
+  // Обновляем время окончания работы для выхода в ноль
+  const currentRec = await getRecord(currentDate);
+  updateTargetEndTime(currentRec.in_time, carryPrev);
 }
 
 async function openBreakModal(){
