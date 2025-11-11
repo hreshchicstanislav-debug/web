@@ -2420,59 +2420,63 @@ function openModalHTML(title, html, hideCloseButton = false){
 }
 function closeModal(){
   const modalBack = $('#modalBack');
-  if (modalBack) {
-    // Если открыт отчет (currentReportText не null), копируем его в буфер с датой
-    if (currentReportText) {
-      // Формируем полный текст для копирования: дата + пустая строка + текст отчета
-      const fullText = currentReportDate 
-        ? `${currentReportDate}\n\n${currentReportText}`
-        : currentReportText;
-      
-      copyToClipboard(fullText).then(() => {
-        console.log('Отчёт скопирован в буфер обмена');
-      }).catch(err => {
-        console.error('Ошибка копирования отчета:', err);
-      });
-      // Сбрасываем сохраненные данные отчета
-      currentReportText = null;
-      currentReportDate = null;
-    }
-    
-    modalBack.style.display = 'none';
-    
-    // Сбрасываем состояние секции с фото
-    const photoSection = $('#photoSection');
-    const photoContainer = $('#photoContainer');
-    if (photoSection) {
-      photoSection.style.display = 'none';
-    }
-    if (photoContainer) {
-      photoContainer.classList.remove('expanded');
-    }
-    
-    // Восстанавливаем стандартную ширину модального окна
-    const modal = document.querySelector('.modal');
-    if (modal) {
-      modal.style.maxWidth = '720px';
-      modal.style.width = '100%';
-      modal.style.margin = '0';
-    }
-    
-    // Восстанавливаем стандартный padding для modal-back
-    const modalBack = $('#modalBack');
-    if (modalBack) {
-      modalBack.style.padding = '24px';
-    }
-    
-    // Восстанавливаем видимость кнопки "Закрыть"
-    const modalClose = $('#modalClose');
-    if (modalClose) {
-      modalClose.style.display = 'block';
-    }
-    
-    // Сбрасываем тип модального окна
-    currentModalType = null;
+  if (!modalBack) {
+    return; // Если modalBack не найден, выходим
   }
+  
+  // Сначала закрываем окно, чтобы оно закрылось независимо от копирования
+  modalBack.style.display = 'none';
+  
+  // Если открыт отчет (currentReportText не null), копируем его в буфер с датой
+  if (currentReportText) {
+    // Формируем полный текст для копирования: дата + пустая строка + текст отчета
+    const fullText = currentReportDate 
+      ? `${currentReportDate}\n\n${currentReportText}`
+      : currentReportText;
+    
+    // Копируем в буфер асинхронно (не блокируем закрытие окна)
+    copyToClipboard(fullText).then(() => {
+      console.log('Отчёт скопирован в буфер обмена');
+    }).catch(err => {
+      console.error('Ошибка копирования отчета:', err);
+    });
+    
+    // Сбрасываем сохраненные данные отчета
+    currentReportText = null;
+    currentReportDate = null;
+  }
+  
+  // Сбрасываем состояние секции с фото
+  const photoSection = $('#photoSection');
+  const photoContainer = $('#photoContainer');
+  if (photoSection) {
+    photoSection.style.display = 'none';
+  }
+  if (photoContainer) {
+    photoContainer.classList.remove('expanded');
+  }
+  
+  // Восстанавливаем стандартную ширину модального окна
+  const modal = document.querySelector('.modal');
+  if (modal) {
+    modal.style.maxWidth = '720px';
+    modal.style.width = '100%';
+    modal.style.margin = '0';
+  }
+  
+  // Восстанавливаем стандартный padding для modal-back
+  if (modalBack) {
+    modalBack.style.padding = '24px';
+  }
+  
+  // Восстанавливаем видимость кнопки "Закрыть"
+  const modalClose = $('#modalClose');
+  if (modalClose) {
+    modalClose.style.display = 'block';
+  }
+  
+  // Сбрасываем тип модального окна
+  currentModalType = null;
 }
 
 // Инициализация обработчиков модального окна после загрузки DOM
