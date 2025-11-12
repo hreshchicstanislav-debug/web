@@ -1969,37 +1969,26 @@ async function renderTasks() {
       refreshBtn.textContent = 'Обновление...';
       
       try {
-        console.log('Отправляем запрос к Edge Function:', `${SUPABASE_URL}/functions/v1/fetch-asana-stats`);
+        console.log('Вызываем Edge Function через Supabase client');
         
-        // Вызываем Edge Function напрямую через fetch
-        const response = await fetch(`${SUPABASE_URL}/functions/v1/fetch-asana-stats`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'apikey': SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        console.log('Ответ получен, статус:', response.status, response.statusText);
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('Ошибка ответа:', errorText);
-          let errorData;
-          try {
-            errorData = JSON.parse(errorText);
-          } catch {
-            errorData = { error: errorText || 'Unknown error' };
-          }
-          throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        // Используем Supabase client для вызова Edge Function (избегаем проблем с CORS)
+        if (!supabaseClient) {
+          throw new Error('Supabase client не инициализирован');
         }
         
-        const result = await response.json();
-        console.log('Ответ от Edge Function:', result);
+        const { data: result, error: invokeError } = await supabaseClient.functions.invoke('fetch-asana-stats', {
+          body: {}
+        });
         
-        if (!result.success) {
-          throw new Error(result.error || 'Ошибка обновления данных');
+        console.log('Ответ от Edge Function:', result);
+        console.log('Ошибка (если есть):', invokeError);
+        
+        if (invokeError) {
+          throw new Error(invokeError.message || 'Ошибка вызова Edge Function');
+        }
+        
+        if (!result || !result.success) {
+          throw new Error(result?.error || 'Ошибка обновления данных');
         }
         
         // Используем данные из ответа Edge Function
