@@ -1915,7 +1915,7 @@ async function renderTasks() {
     <div style="margin-top: 24px;">
       <button id="refreshStats" class="btn">Обновить данные</button>
       <p class="muted" style="margin-top: 8px; font-size: 12px;">
-        Данные обновляются автоматически каждый час. В воскресенье в 23:59 данные очищаются для новой недели.
+        Нажмите кнопку "Обновить данные" для получения актуальной статистики из Asana. В воскресенье в 23:59 данные очищаются для новой недели.
       </p>
     </div>
   `;
@@ -1928,14 +1928,26 @@ async function renderTasks() {
       refreshBtn.textContent = 'Обновление...';
       
       try {
-        // Вызываем Edge Function для обновления данных
-        if (!supabaseClient) {
-          throw new Error('Supabase клиент не инициализирован');
+        // Вызываем Edge Function напрямую через fetch
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/fetch-asana-stats`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'apikey': SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+          throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
         }
         
-        const { data, error } = await supabaseClient.functions.invoke('fetch-asana-stats');
+        const result = await response.json();
         
-        if (error) throw error;
+        if (!result.success) {
+          throw new Error(result.error || 'Ошибка обновления данных');
+        }
         
         // Перезагружаем страницу
         await renderTasks();
