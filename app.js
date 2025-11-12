@@ -2146,13 +2146,22 @@ async function getAsanaTasksDetails() {
       return [];
     }
     
-    // Получаем начало текущей недели (понедельник)
-    const now = new Date();
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(now.getFullYear(), now.getMonth(), diff);
-    monday.setHours(0, 0, 0, 0);
-    const weekStartStr = monday.toISOString().split('T')[0];
+    // Используем week_start_date из кешированной статистики, если она есть
+    // Это гарантирует, что мы запрашиваем данные для той же недели, что и статистика
+    let weekStartStr;
+    if (cachedTasksStats && cachedTasksStats.week_start_date) {
+      weekStartStr = cachedTasksStats.week_start_date;
+      console.log('getAsanaTasksDetails: Используем week_start_date из кеша:', weekStartStr);
+    } else {
+      // Если кеша нет, рассчитываем начало недели (как в getAsanaStats)
+      const now = new Date();
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.getFullYear(), now.getMonth(), diff);
+      monday.setHours(0, 0, 0, 0);
+      weekStartStr = monday.toISOString().split('T')[0];
+      console.log('getAsanaTasksDetails: Рассчитали week_start_date:', weekStartStr);
+    }
     
     console.log('getAsanaTasksDetails: Запрашиваем данные для недели:', weekStartStr);
     
