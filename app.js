@@ -1809,6 +1809,149 @@ async function updateDayInMonthList(date, updatedRec) {
   console.log('День обновлен в списке:', date);
 }
 
+// Функция для получения статистики Asana из Supabase
+async function getAsanaStats() {
+  try {
+    if (!supabaseClient) {
+      console.error('Supabase клиент не инициализирован');
+      return {
+        completed_count: 0,
+        pending_count: 0,
+        total_plan: 0,
+        remaining_to_plan: 80
+      };
+    }
+    
+    // Получаем начало текущей недели (понедельник)
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(now.setDate(diff));
+    monday.setHours(0, 0, 0, 0);
+    const weekStartStr = monday.toISOString().split('T')[0];
+    
+    // Запрашиваем данные из Supabase
+    const { data, error } = await supabaseClient
+      .from('asana_stats')
+      .select('*')
+      .eq('week_start_date', weekStartStr)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') { // PGRST116 = not found
+      console.error('Ошибка получения статистики Asana:', error);
+      throw error;
+    }
+    
+    // Если данных нет, возвращаем значения по умолчанию
+    if (!data) {
+      return {
+        completed_count: 0,
+        pending_count: 0,
+        total_plan: 0,
+        remaining_to_plan: 80
+      };
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('Ошибка получения статистики Asana:', error);
+    return {
+      completed_count: 0,
+      pending_count: 0,
+      total_plan: 0,
+      remaining_to_plan: 80
+    };
+  }
+}
+
+// Функция рендеринга страницы "Задачи"
+async function renderTasks() {
+  const app = $('#app');
+  
+  // Показываем загрузку
+  app.innerHTML = `
+    <h1>Задачи Asana</h1>
+    <p>Загрузка данных...</p>
+  `;
+  
+  // Получаем статистику
+  const stats = await getAsanaStats();
+  
+  app.innerHTML = `
+    <h1>Задачи Asana</h1>
+    
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 24px;">
+      <!-- Карточка 1: Отснято на неделе -->
+      <div style="background: #e8f5e9; border: 1px solid #4caf50; border-radius: 8px; padding: 20px;">
+        <h3 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 14px; font-weight: 500;">Отснято на неделе</h3>
+        <div style="font-size: 32px; font-weight: bold; color: #1b5e20;">${stats.completed_count || 0}</div>
+        <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">товаров</p>
+      </div>
+      
+      <!-- Карточка 2: Предстоит отснять -->
+      <div style="background: #fff3e0; border: 1px solid #ff9800; border-radius: 8px; padding: 20px;">
+        <h3 style="margin: 0 0 12px 0; color: #e65100; font-size: 14px; font-weight: 500;">Предстоит отснять</h3>
+        <div style="font-size: 32px; font-weight: bold; color: #bf360c;">${stats.pending_count || 0}</div>
+        <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">товаров</p>
+      </div>
+      
+      <!-- Карточка 3: Запланировано товаров на неделю -->
+      <div style="background: #e3f2fd; border: 1px solid #2196f3; border-radius: 8px; padding: 20px;">
+        <h3 style="margin: 0 0 12px 0; color: #1565c0; font-size: 14px; font-weight: 500;">Запланировано товаров на неделю</h3>
+        <div style="font-size: 32px; font-weight: bold; color: #0d47a1;">${stats.total_plan || 0}</div>
+        <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">товаров</p>
+      </div>
+      
+      <!-- Карточка 4: До выполнения плана -->
+      <div style="background: ${stats.remaining_to_plan > 0 ? '#fce4ec' : '#e8f5e9'}; border: 1px solid ${stats.remaining_to_plan > 0 ? '#e91e63' : '#4caf50'}; border-radius: 8px; padding: 20px;">
+        <h3 style="margin: 0 0 12px 0; color: ${stats.remaining_to_plan > 0 ? '#880e4f' : '#2e7d32'}; font-size: 14px; font-weight: 500;">До выполнения плана</h3>
+        <div style="font-size: 32px; font-weight: bold; color: ${stats.remaining_to_plan > 0 ? '#c2185b' : '#1b5e20'};">
+          ${stats.remaining_to_plan || 0}
+        </div>
+        <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">товаров (план: 80${stats.remaining_to_plan < 0 ? ', перевыполнение: ' + Math.abs(stats.remaining_to_plan) : ''})</p>
+      </div>
+    </div>
+    
+    <div style="margin-top: 24px;">
+      <button id="refreshStats" class="btn">Обновить данные</button>
+      <p class="muted" style="margin-top: 8px; font-size: 12px;">
+        Данные обновляются автоматически каждый час. В воскресенье в 23:59 данные очищаются для новой недели.
+      </p>
+    </div>
+  `;
+  
+  // Обработчик кнопки обновления
+  const refreshBtn = $('#refreshStats');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = 'Обновление...';
+      
+      try {
+        // Вызываем Edge Function для обновления данных
+        if (!supabaseClient) {
+          throw new Error('Supabase клиент не инициализирован');
+        }
+        
+        const { data, error } = await supabaseClient.functions.invoke('fetch-asana-stats');
+        
+        if (error) throw error;
+        
+        // Перезагружаем страницу
+        await renderTasks();
+        
+        alert('Данные успешно обновлены!');
+      } catch (error) {
+        console.error('Ошибка обновления данных:', error);
+        alert('Ошибка обновления данных: ' + (error.message || 'Неизвестная ошибка'));
+      } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = 'Обновить данные';
+      }
+    });
+  }
+}
+
 async function renderBoss(){
   console.log('renderBoss() вызван');
   const app = $('#app');
@@ -2311,9 +2454,12 @@ function route(){
   const h = location.hash || '#/me';
   $('#tabMe').classList.toggle('active', h==='#/me');
   $('#tabBoss').classList.toggle('active', h==='#/boss');
+  $('#tabTasks').classList.toggle('active', h==='#/tasks');
   currentDate = todayISO();
   if (h==='#/boss') {
     renderBoss();
+  } else if (h==='#/tasks') {
+    renderTasks();
   } else {
     renderMe();
   }
