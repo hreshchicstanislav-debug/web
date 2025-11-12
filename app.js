@@ -1959,12 +1959,18 @@ async function renderTasks() {
   
   // Обработчик кнопки обновления
   const refreshBtn = $('#refreshStats');
+  console.log('Кнопка refreshStats найдена:', !!refreshBtn);
+  
   if (refreshBtn) {
+    console.log('Добавляем обработчик клика на кнопку обновления');
     refreshBtn.addEventListener('click', async () => {
+      console.log('Кнопка "Обновить данные" нажата');
       refreshBtn.disabled = true;
       refreshBtn.textContent = 'Обновление...';
       
       try {
+        console.log('Отправляем запрос к Edge Function:', `${SUPABASE_URL}/functions/v1/fetch-asana-stats`);
+        
         // Вызываем Edge Function напрямую через fetch
         const response = await fetch(`${SUPABASE_URL}/functions/v1/fetch-asana-stats`, {
           method: 'POST',
@@ -1975,23 +1981,32 @@ async function renderTasks() {
           }
         });
         
+        console.log('Ответ получен, статус:', response.status, response.statusText);
+        
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+          const errorText = await response.text();
+          console.error('Ошибка ответа:', errorText);
+          let errorData;
+          try {
+            errorData = JSON.parse(errorText);
+          } catch {
+            errorData = { error: errorText || 'Unknown error' };
+          }
           throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
         }
         
         const result = await response.json();
+        console.log('Ответ от Edge Function:', result);
         
         if (!result.success) {
           throw new Error(result.error || 'Ошибка обновления данных');
         }
         
         // Используем данные из ответа Edge Function
-        console.log('Ответ от Edge Function:', result);
-        
         if (result.data) {
           console.log('Обновляем карточки данными из ответа:', result.data);
           updateTasksCards(result.data);
+          alert('Данные успешно обновлены!');
         } else {
           // Если данных нет в ответе, получаем из Supabase с небольшой задержкой
           console.log('Данных нет в ответе, получаем из Supabase...');
@@ -1999,6 +2014,7 @@ async function renderTasks() {
           const stats = await getAsanaStats();
           console.log('Получены данные из Supabase:', stats);
           updateTasksCards(stats);
+          alert('Данные успешно обновлены!');
         }
         
         refreshBtn.textContent = 'Обновить данные';
@@ -2010,6 +2026,8 @@ async function renderTasks() {
         refreshBtn.textContent = 'Обновить данные';
       }
     });
+  } else {
+    console.error('Кнопка refreshStats не найдена!');
   }
 }
 
@@ -2740,7 +2758,7 @@ function closeModal(){
   }
   
   // Сначала закрываем окно, чтобы оно закрылось независимо от копирования
-  modalBack.style.display = 'none';
+    modalBack.style.display = 'none';
   
   // Если открыт отчет (currentReportText не null), копируем его в буфер с датой
   if (currentReportText) {
@@ -2760,16 +2778,16 @@ function closeModal(){
     currentReportText = null;
     currentReportDate = null;
   }
-  
-  // Сбрасываем состояние секции с фото
-  const photoSection = $('#photoSection');
-  const photoContainer = $('#photoContainer');
-  if (photoSection) {
-    photoSection.style.display = 'none';
-  }
-  if (photoContainer) {
-    photoContainer.classList.remove('expanded');
-  }
+    
+    // Сбрасываем состояние секции с фото
+    const photoSection = $('#photoSection');
+    const photoContainer = $('#photoContainer');
+    if (photoSection) {
+      photoSection.style.display = 'none';
+    }
+    if (photoContainer) {
+      photoContainer.classList.remove('expanded');
+    }
   
   // Восстанавливаем стандартную ширину модального окна
   const modal = document.querySelector('.modal');
