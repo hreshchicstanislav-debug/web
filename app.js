@@ -1814,6 +1814,11 @@ async function getAsanaStats() {
   try {
     if (!supabaseClient) {
       console.error('Supabase клиент не инициализирован');
+      // Если есть кеш, возвращаем его вместо нулей
+      if (cachedTasksStats) {
+        console.log('Используем кеш из-за отсутствия клиента');
+        return cachedTasksStats;
+      }
       return {
         completed_count: 0,
         pending_count: 0,
@@ -1839,11 +1844,21 @@ async function getAsanaStats() {
     
     if (error && error.code !== 'PGRST116') { // PGRST116 = not found
       console.error('Ошибка получения статистики Asana:', error);
+      // Если есть кеш, возвращаем его вместо ошибки
+      if (cachedTasksStats) {
+        console.log('Используем кеш из-за ошибки запроса');
+        return cachedTasksStats;
+      }
       throw error;
     }
     
-    // Если данных нет, возвращаем значения по умолчанию
+    // Если данных нет, проверяем кеш
     if (!data) {
+      // Если есть кеш, возвращаем его
+      if (cachedTasksStats) {
+        console.log('Данных нет в Supabase, используем кеш');
+        return cachedTasksStats;
+      }
       return {
         completed_count: 0,
         pending_count: 0,
@@ -1852,9 +1867,17 @@ async function getAsanaStats() {
       };
     }
     
+    // Сохраняем в кеш только если данные есть
+    cachedTasksStats = data;
+    console.log('Данные получены из Supabase и сохранены в кеш:', data);
     return data;
   } catch (error) {
     console.error('Ошибка получения статистики Asana:', error);
+    // Если есть кеш, возвращаем его вместо нулей
+    if (cachedTasksStats) {
+      console.log('Используем кеш из-за исключения');
+      return cachedTasksStats;
+    }
     return {
       completed_count: 0,
       pending_count: 0,
@@ -1913,6 +1936,7 @@ async function renderTasks() {
   // Если есть кешированная статистика, используем её для быстрого отображения
   let stats;
   if (cachedTasksStats) {
+    console.log('Используем кешированную статистику:', cachedTasksStats);
     stats = cachedTasksStats;
   } else {
     // Показываем загрузку только если нет кеша
@@ -1923,8 +1947,11 @@ async function renderTasks() {
     
     // Получаем статистику
     stats = await getAsanaStats();
-    // Сохраняем в кеш
-    cachedTasksStats = stats;
+    // Сохраняем в кеш всегда (getAsanaStats уже сохраняет в кеш, но на всякий случай)
+    if (stats) {
+      cachedTasksStats = stats;
+      console.log('Статистика сохранена в кеш:', stats);
+    }
   }
   
   app.innerHTML = `
@@ -2031,8 +2058,9 @@ async function renderTasks() {
           console.log('Обновляем карточки данными из ответа:', result.data);
           updateTasksCards(result.data);
           
-          // Обновляем кеш статистики
+          // Обновляем кеш статистики (всегда, даже если нули)
           cachedTasksStats = result.data;
+          console.log('Кеш статистики обновлен:', cachedTasksStats);
           
           // Очищаем кеш детальных данных, чтобы при следующем открытии загрузились свежие данные
           cachedTasksDetails = null;
@@ -2051,8 +2079,9 @@ async function renderTasks() {
           console.log('Получены данные из Supabase:', stats);
           updateTasksCards(stats);
           
-          // Обновляем кеш статистики
+          // Обновляем кеш статистики (всегда, даже если нули)
           cachedTasksStats = stats;
+          console.log('Кеш статистики обновлен:', cachedTasksStats);
           
           // Очищаем кеш детальных данных
           cachedTasksDetails = null;
