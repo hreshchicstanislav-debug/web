@@ -480,6 +480,19 @@
       transition: max-height 300ms cubic-bezier(0.2,0.8,0.2,1), opacity 200ms ease-in;
     }
     
+    .tasks-details-container{
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 300ms cubic-bezier(0.2,0.8,0.2,1);
+      opacity: 0;
+    }
+    
+    .tasks-details-container.expanded{
+      max-height: 2000px;
+      opacity: 1;
+      transition: max-height 300ms cubic-bezier(0.2,0.8,0.2,1), opacity 200ms ease-in;
+    }
+    
     #photoContent{
       display: flex;
       align-items: center;

@@ -1902,17 +1902,30 @@ function updateTasksCards(stats) {
 }
 
 // Функция рендеринга страницы "Задачи"
+// Глобальные переменные для сохранения состояния
+let tasksDetailsExpanded = false;
+let cachedTasksDetails = null;
+let cachedTasksStats = null; // Кеш для статистики
+
 async function renderTasks() {
   const app = $('#app');
   
-  // Показываем загрузку
-  app.innerHTML = `
-    <h1>Задачи Asana</h1>
-    <p>Загрузка данных...</p>
-  `;
-  
-  // Получаем статистику
-  const stats = await getAsanaStats();
+  // Если есть кешированная статистика, используем её для быстрого отображения
+  let stats;
+  if (cachedTasksStats) {
+    stats = cachedTasksStats;
+  } else {
+    // Показываем загрузку только если нет кеша
+    app.innerHTML = `
+      <h1>Задачи Asana</h1>
+      <p>Загрузка данных...</p>
+    `;
+    
+    // Получаем статистику
+    stats = await getAsanaStats();
+    // Сохраняем в кеш
+    cachedTasksStats = stats;
+  }
   
   app.innerHTML = `
     <h1 style="margin: 0 0 12px 0; font-size: 24px;">Задачи Asana</h1>
@@ -1955,7 +1968,29 @@ async function renderTasks() {
         Нажмите кнопку для получения актуальной статистики из Asana.
       </p>
     </div>
+    
+    <div style="margin-top: 16px;">
+      <button id="showDetails" class="btn" style="width: 100%; position: relative; z-index: 1; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;">Показать подробности</button>
+    </div>
+    
+    <div id="tasksDetailsContainer" class="tasks-details-container ${tasksDetailsExpanded ? 'expanded' : ''}" style="margin-top: 16px;">
+      <div id="tasksDetailsList" style="background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 8px; padding: 16px;"></div>
+    </div>
   `;
+  
+  // Если секция была развернута, восстанавливаем данные
+  if (tasksDetailsExpanded) {
+    const detailsContainer = $('#tasksDetailsContainer');
+    if (detailsContainer) {
+      detailsContainer.classList.add('expanded');
+    }
+    // Восстанавливаем данные из кеша или загружаем заново
+    if (cachedTasksDetails) {
+      renderTasksDetailsFromCache();
+    } else {
+      await renderTasksDetails();
+    }
+  }
   
   // Обработчик кнопки обновления
   const refreshBtn = $('#refreshStats');
@@ -1995,6 +2030,18 @@ async function renderTasks() {
         if (result.data) {
           console.log('Обновляем карточки данными из ответа:', result.data);
           updateTasksCards(result.data);
+          
+          // Обновляем кеш статистики
+          cachedTasksStats = result.data;
+          
+          // Очищаем кеш детальных данных, чтобы при следующем открытии загрузились свежие данные
+          cachedTasksDetails = null;
+          
+          // Если секция подробностей развернута, обновляем данные
+          if (tasksDetailsExpanded) {
+            await renderTasksDetails();
+          }
+          
           alert('Данные успешно обновлены!');
         } else {
           // Если данных нет в ответе, получаем из Supabase с небольшой задержкой
@@ -2003,6 +2050,18 @@ async function renderTasks() {
           const stats = await getAsanaStats();
           console.log('Получены данные из Supabase:', stats);
           updateTasksCards(stats);
+          
+          // Обновляем кеш статистики
+          cachedTasksStats = stats;
+          
+          // Очищаем кеш детальных данных
+          cachedTasksDetails = null;
+          
+          // Если секция подробностей развернута, обновляем данные
+          if (tasksDetailsExpanded) {
+            await renderTasksDetails();
+          }
+          
           alert('Данные успешно обновлены!');
         }
         
@@ -2018,6 +2077,153 @@ async function renderTasks() {
   } else {
     console.error('Кнопка refreshStats не найдена!');
   }
+  
+  // Обработчик кнопки "Показать подробности"
+  const showDetailsBtn = $('#showDetails');
+  const detailsContainer = $('#tasksDetailsContainer');
+  
+  if (showDetailsBtn && detailsContainer) {
+    // Восстанавливаем текст кнопки
+    if (tasksDetailsExpanded) {
+      showDetailsBtn.textContent = 'Скрыть подробности';
+    } else {
+      showDetailsBtn.textContent = 'Показать подробности';
+    }
+    
+    showDetailsBtn.addEventListener('click', async () => {
+      tasksDetailsExpanded = !tasksDetailsExpanded;
+      
+      if (tasksDetailsExpanded) {
+        // Загружаем данные перед раскрытием
+        await renderTasksDetails();
+        
+        // Раскрываем с анимацией
+        detailsContainer.classList.add('expanded');
+        showDetailsBtn.textContent = 'Скрыть подробности';
+      } else {
+        // Скрываем с анимацией
+        detailsContainer.classList.remove('expanded');
+        showDetailsBtn.textContent = 'Показать подробности';
+      }
+    });
+  }
+}
+
+// Функция для получения детальных данных о задачах из asana_tasks
+async function getAsanaTasksDetails() {
+  try {
+    if (!supabaseClient) {
+      console.error('Supabase клиент не инициализирован');
+      return [];
+    }
+    
+    // Получаем начало текущей недели (понедельник)
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(now.getFullYear(), now.getMonth(), diff);
+    monday.setHours(0, 0, 0, 0);
+    const weekStartStr = monday.toISOString().split('T')[0];
+    
+    // Запрашиваем данные из Supabase
+    const { data, error } = await supabaseClient
+      .from('asana_tasks')
+      .select('task_name, quantity, completed_at')
+      .eq('week_start_date', weekStartStr)
+      .order('completed_at', { ascending: false });
+    
+    if (error && error.code !== 'PGRST116') {
+      console.error('Ошибка получения деталей задач Asana:', error);
+      throw error;
+    }
+    
+    return data || [];
+  } catch (error) {
+    console.error('Ошибка в getAsanaTasksDetails:', error);
+    return [];
+  }
+}
+
+// Функция для форматирования даты в формат день.месяц.год
+function formatDate(dateString) {
+  if (!dateString) return '';
+  
+  const date = new Date(dateString);
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  
+  return `${day}.${month}.${year}`;
+}
+
+// Функция для отображения детальных данных о задачах
+async function renderTasksDetails() {
+  const detailsList = $('#tasksDetailsList');
+  if (!detailsList) return;
+  
+  // Показываем загрузку
+  detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+  
+  try {
+    const tasks = await getAsanaTasksDetails();
+    
+    // Сохраняем данные в кеш
+    cachedTasksDetails = tasks;
+    
+    renderTasksDetailsFromCache();
+  } catch (error) {
+    console.error('Ошибка отображения деталей задач:', error);
+    const detailsList = $('#tasksDetailsList');
+    if (detailsList) {
+      detailsList.innerHTML = '<p style="text-align: center; color: var(--error);">Ошибка загрузки данных</p>';
+    }
+  }
+}
+
+// Функция для отображения данных из кеша
+function renderTasksDetailsFromCache() {
+  const detailsList = $('#tasksDetailsList');
+  if (!detailsList) return;
+  
+  if (!cachedTasksDetails || cachedTasksDetails.length === 0) {
+    detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Нет данных для отображения</p>';
+    return;
+  }
+  
+  // Создаем таблицу
+  let tableHTML = `
+    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+      <thead>
+        <tr style="background: var(--bg-muted); border-bottom: 2px solid var(--border-default);">
+          <th style="padding: 12px; text-align: left; font-weight: 600; color: var(--text-primary);">Задача</th>
+          <th style="padding: 12px; text-align: center; font-weight: 600; color: var(--text-primary);">Кол-во</th>
+          <th style="padding: 12px; text-align: center; font-weight: 600; color: var(--text-primary);">Дата</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  cachedTasksDetails.forEach((task, index) => {
+    const rowStyle = index % 2 === 0 ? 'background: var(--bg-surface);' : 'background: var(--bg-muted);';
+    const taskName = task.task_name || 'Без названия';
+    const quantity = task.quantity || 0;
+    const date = formatDate(task.completed_at);
+    
+    tableHTML += `
+      <tr style="${rowStyle} border-bottom: 1px solid var(--border-default);">
+        <td style="padding: 12px; color: var(--text-primary); word-break: break-word;">${taskName}</td>
+        <td style="padding: 12px; text-align: center; color: var(--text-primary); font-weight: 500;">${quantity}</td>
+        <td style="padding: 12px; text-align: center; color: var(--text-primary);">${date}</td>
+      </tr>
+    `;
+  });
+  
+  tableHTML += `
+      </tbody>
+    </table>
+  `;
+  
+  detailsList.innerHTML = tableHTML;
 }
 
 async function renderBoss(){
