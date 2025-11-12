@@ -34,9 +34,11 @@ GET https://app.asana.com/api/1.0/tasks?project=1210258013776969&assignee=121025
 
 **ВАЖНО**: Токен нужно хранить в секретах Supabase, не в коде!
 
-## Шаг 2: Создание таблицы в Supabase
+## Шаг 2: Создание таблиц в Supabase
 
-Создайте таблицу для хранения статистики Asana:
+### 2.1. Таблица для статистики (asana_stats)
+
+Создайте таблицу для хранения агрегированной статистики Asana:
 
 ```sql
 -- Создание таблицы для статистики Asana
@@ -56,17 +58,51 @@ CREATE TABLE asana_stats (
 -- Создание индекса для быстрого поиска по дате
 CREATE INDEX idx_asana_stats_week_start ON asana_stats(week_start_date);
 
--- RLS политики (если нужен доступ только для аутентифицированных пользователей)
+-- RLS политики
 ALTER TABLE asana_stats ENABLE ROW LEVEL SECURITY;
 
 -- Политика для SELECT (все могут читать)
 CREATE POLICY "Anyone can read asana_stats"
   ON asana_stats FOR SELECT
   USING (true);
-
--- Политика для INSERT/UPDATE (только service_role)
--- Для автоматического обновления через Edge Function
 ```
+
+### 2.2. Таблица для детальной информации о задачах (asana_tasks)
+
+Создайте таблицу для хранения детальной информации о каждой задаче с количеством товаров:
+
+```sql
+-- Создание таблицы для детальной информации о задачах Asana
+CREATE TABLE asana_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  asana_task_gid TEXT NOT NULL UNIQUE, -- GID задачи из Asana
+  task_name TEXT, -- Название задачи
+  completed BOOLEAN DEFAULT false, -- Завершена ли задача
+  completed_at TIMESTAMP WITH TIME ZONE, -- Дата завершения
+  due_on DATE, -- Дедлайн задачи
+  quantity INTEGER, -- Количество товаров (из поля "Кол-во товаров", Custom Field ID: 1210420107320602)
+  assignee_gid TEXT, -- GID исполнителя (User ID: 1210252517070407)
+  week_start_date DATE NOT NULL, -- Дата начала недели (понедельник) для группировки
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Индексы для быстрого поиска
+CREATE INDEX idx_asana_tasks_asana_gid ON asana_tasks(asana_task_gid);
+CREATE INDEX idx_asana_tasks_week_start ON asana_tasks(week_start_date);
+CREATE INDEX idx_asana_tasks_completed ON asana_tasks(completed);
+CREATE INDEX idx_asana_tasks_due_on ON asana_tasks(due_on);
+
+-- RLS политики
+ALTER TABLE asana_tasks ENABLE ROW LEVEL SECURITY;
+
+-- Политика для SELECT (все могут читать)
+CREATE POLICY "Anyone can read asana_tasks"
+  ON asana_tasks FOR SELECT
+  USING (true);
+```
+
+**Примечание:** SQL скрипт для создания таблицы `asana_tasks` находится в файле `create_asana_tasks_table.sql` в корне проекта.
 
 ## Шаг 3: Создание Supabase Edge Function
 
