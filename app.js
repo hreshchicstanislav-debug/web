@@ -1864,6 +1864,43 @@ async function getAsanaStats() {
   }
 }
 
+// Функция обновления значений в карточках без пересоздания HTML
+function updateTasksCards(stats) {
+  console.log('updateTasksCards вызвана с данными:', stats);
+  
+  const completedValue = $('#completedCount');
+  const pendingValue = $('#pendingCount');
+  const totalPlanValue = $('#totalPlan');
+  const remainingValue = $('#remainingCount');
+  const remainingText = $('#remainingText');
+  const card4 = $('#cardRemaining');
+  
+  console.log('Найденные элементы:', {
+    completedValue: !!completedValue,
+    pendingValue: !!pendingValue,
+    totalPlanValue: !!totalPlanValue,
+    remainingValue: !!remainingValue,
+    remainingText: !!remainingText,
+    card4: !!card4
+  });
+  
+  if (completedValue) completedValue.textContent = stats.completed_count || 0;
+  if (pendingValue) pendingValue.textContent = stats.pending_count || 0;
+  if (totalPlanValue) totalPlanValue.textContent = stats.total_plan || 0;
+  if (remainingValue) remainingValue.textContent = stats.remaining_to_plan || 0;
+  
+  // Обновляем стили и текст для карточки "До выполнения плана"
+  if (card4 && remainingValue && remainingText) {
+    const isPositive = stats.remaining_to_plan > 0;
+    card4.style.background = isPositive ? '#fce4ec' : '#e8f5e9';
+    card4.style.borderColor = isPositive ? '#e91e63' : '#4caf50';
+    const title = card4.querySelector('h3');
+    if (title) title.style.color = isPositive ? '#880e4f' : '#2e7d32';
+    remainingValue.style.color = isPositive ? '#c2185b' : '#1b5e20';
+    remainingText.textContent = `товаров (план: 80${stats.remaining_to_plan < 0 ? ', перевыполнение: ' + Math.abs(stats.remaining_to_plan) : ''})`;
+  }
+}
+
 // Функция рендеринга страницы "Задачи"
 async function renderTasks() {
   const app = $('#app');
@@ -1878,44 +1915,44 @@ async function renderTasks() {
   const stats = await getAsanaStats();
   
   app.innerHTML = `
-    <h1>Задачи Asana</h1>
+    <h1 style="margin: 0 0 12px 0; font-size: 24px;">Задачи Asana</h1>
     
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 24px;">
+    <div id="tasksGrid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 12px;">
       <!-- Карточка 1: Отснято на неделе -->
-      <div style="background: #e8f5e9; border: 1px solid #4caf50; border-radius: 8px; padding: 20px;">
-        <h3 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 14px; font-weight: 500;">Отснято на неделе</h3>
-        <div style="font-size: 32px; font-weight: bold; color: #1b5e20;">${stats.completed_count || 0}</div>
-        <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">товаров</p>
+      <div style="background: #e8f5e9; border: 1px solid #4caf50; border-radius: 8px; padding: 12px;">
+        <h3 style="margin: 0 0 8px 0; color: #2e7d32; font-size: 12px; font-weight: 500;">Отснято на неделе</h3>
+        <div id="completedCount" style="font-size: 24px; font-weight: bold; color: #1b5e20;">${stats.completed_count || 0}</div>
+        <p style="margin: 4px 0 0 0; color: #666; font-size: 11px;">товаров</p>
       </div>
       
       <!-- Карточка 2: Предстоит отснять -->
-      <div style="background: #fff3e0; border: 1px solid #ff9800; border-radius: 8px; padding: 20px;">
-        <h3 style="margin: 0 0 12px 0; color: #e65100; font-size: 14px; font-weight: 500;">Предстоит отснять</h3>
-        <div style="font-size: 32px; font-weight: bold; color: #bf360c;">${stats.pending_count || 0}</div>
-        <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">товаров</p>
+      <div style="background: #fff3e0; border: 1px solid #ff9800; border-radius: 8px; padding: 12px;">
+        <h3 style="margin: 0 0 8px 0; color: #e65100; font-size: 12px; font-weight: 500;">Предстоит отснять</h3>
+        <div id="pendingCount" style="font-size: 24px; font-weight: bold; color: #bf360c;">${stats.pending_count || 0}</div>
+        <p style="margin: 4px 0 0 0; color: #666; font-size: 11px;">товаров</p>
       </div>
       
       <!-- Карточка 3: Запланировано товаров на неделю -->
-      <div style="background: #e3f2fd; border: 1px solid #2196f3; border-radius: 8px; padding: 20px;">
-        <h3 style="margin: 0 0 12px 0; color: #1565c0; font-size: 14px; font-weight: 500;">Запланировано товаров на неделю</h3>
-        <div style="font-size: 32px; font-weight: bold; color: #0d47a1;">${stats.total_plan || 0}</div>
-        <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">товаров</p>
+      <div style="background: #e3f2fd; border: 1px solid #2196f3; border-radius: 8px; padding: 12px;">
+        <h3 style="margin: 0 0 8px 0; color: #1565c0; font-size: 12px; font-weight: 500;">Запланировано</h3>
+        <div id="totalPlan" style="font-size: 24px; font-weight: bold; color: #0d47a1;">${stats.total_plan || 0}</div>
+        <p style="margin: 4px 0 0 0; color: #666; font-size: 11px;">товаров</p>
       </div>
       
       <!-- Карточка 4: До выполнения плана -->
-      <div style="background: ${stats.remaining_to_plan > 0 ? '#fce4ec' : '#e8f5e9'}; border: 1px solid ${stats.remaining_to_plan > 0 ? '#e91e63' : '#4caf50'}; border-radius: 8px; padding: 20px;">
-        <h3 style="margin: 0 0 12px 0; color: ${stats.remaining_to_plan > 0 ? '#880e4f' : '#2e7d32'}; font-size: 14px; font-weight: 500;">До выполнения плана</h3>
-        <div style="font-size: 32px; font-weight: bold; color: ${stats.remaining_to_plan > 0 ? '#c2185b' : '#1b5e20'};">
+      <div id="cardRemaining" style="background: ${stats.remaining_to_plan > 0 ? '#fce4ec' : '#e8f5e9'}; border: 1px solid ${stats.remaining_to_plan > 0 ? '#e91e63' : '#4caf50'}; border-radius: 8px; padding: 12px;">
+        <h3 style="margin: 0 0 8px 0; color: ${stats.remaining_to_plan > 0 ? '#880e4f' : '#2e7d32'}; font-size: 12px; font-weight: 500;">До выполнения плана</h3>
+        <div id="remainingCount" style="font-size: 24px; font-weight: bold; color: ${stats.remaining_to_plan > 0 ? '#c2185b' : '#1b5e20'};">
           ${stats.remaining_to_plan || 0}
         </div>
-        <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">товаров (план: 80${stats.remaining_to_plan < 0 ? ', перевыполнение: ' + Math.abs(stats.remaining_to_plan) : ''})</p>
+        <p id="remainingText" style="margin: 4px 0 0 0; color: #666; font-size: 11px;">товаров (план: 80${stats.remaining_to_plan < 0 ? ', перевыполнение: ' + Math.abs(stats.remaining_to_plan) : ''})</p>
       </div>
     </div>
     
-    <div style="margin-top: 24px;">
-      <button id="refreshStats" class="btn">Обновить данные</button>
-      <p class="muted" style="margin-top: 8px; font-size: 12px;">
-        Нажмите кнопку "Обновить данные" для получения актуальной статистики из Asana. В воскресенье в 23:59 данные очищаются для новой недели.
+    <div style="margin-top: 16px;">
+      <button id="refreshStats" class="btn" style="width: 100%;">Обновить данные</button>
+      <p class="muted" style="margin-top: 8px; font-size: 11px; line-height: 1.4;">
+        Нажмите кнопку для получения актуальной статистики из Asana.
       </p>
     </div>
   `;
@@ -1949,14 +1986,26 @@ async function renderTasks() {
           throw new Error(result.error || 'Ошибка обновления данных');
         }
         
-        // Перезагружаем страницу
-        await renderTasks();
+        // Используем данные из ответа Edge Function
+        console.log('Ответ от Edge Function:', result);
         
-        alert('Данные успешно обновлены!');
+        if (result.data) {
+          console.log('Обновляем карточки данными из ответа:', result.data);
+          updateTasksCards(result.data);
+        } else {
+          // Если данных нет в ответе, получаем из Supabase с небольшой задержкой
+          console.log('Данных нет в ответе, получаем из Supabase...');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const stats = await getAsanaStats();
+          console.log('Получены данные из Supabase:', stats);
+          updateTasksCards(stats);
+        }
+        
+        refreshBtn.textContent = 'Обновить данные';
+        refreshBtn.disabled = false;
       } catch (error) {
         console.error('Ошибка обновления данных:', error);
         alert('Ошибка обновления данных: ' + (error.message || 'Неизвестная ошибка'));
-      } finally {
         refreshBtn.disabled = false;
         refreshBtn.textContent = 'Обновить данные';
       }

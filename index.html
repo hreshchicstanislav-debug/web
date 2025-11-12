@@ -695,6 +695,26 @@
         height: 40px;
         font-size: 28px;
       }
+      /* Стили для страницы "Задачи" на мобильных */
+      #tasksGrid{
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px !important;
+        margin-top: 8px !important;
+      }
+      #tasksGrid > div{
+        padding: 10px !important;
+      }
+      #tasksGrid h3{
+        font-size: 11px !important;
+        margin-bottom: 6px !important;
+      }
+      #tasksGrid > div > div[id]{
+        font-size: 20px !important;
+      }
+      #tasksGrid p{
+        font-size: 10px !important;
+        margin-top: 2px !important;
+      }
     }
     
     /* Очень маленькие экраны */
@@ -741,6 +761,24 @@
       }
       .modal h3{
         font-size: 18px;
+      }
+      /* Стили для страницы "Задачи" на очень маленьких экранах */
+      #tasksGrid{
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 6px !important;
+      }
+      #tasksGrid > div{
+        padding: 8px !important;
+      }
+      #tasksGrid h3{
+        font-size: 10px !important;
+        margin-bottom: 4px !important;
+      }
+      #tasksGrid > div > div[id]{
+        font-size: 18px !important;
+      }
+      #tasksGrid p{
+        font-size: 9px !important;
       }
     }
   </style>
