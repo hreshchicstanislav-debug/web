@@ -2005,17 +2005,37 @@ async function renderTasks() {
     </div>
   `;
   
+  // Загружаем детальные данные сразу (в фоне), чтобы они были готовы при нажатии "Показать подробности"
+  // Используем week_start_date из статистики для точного запроса
+  if (stats && stats.week_start_date) {
+    console.log('Загружаем детальные данные для недели:', stats.week_start_date);
+    // Загружаем асинхронно, не блокируя отображение страницы
+    getAsanaTasksDetailsByWeekStart(stats.week_start_date).then(tasks => {
+      cachedTasksDetails = tasks;
+      console.log('Детальные данные загружены и сохранены в кеш:', tasks.length, 'задач');
+      // Если секция уже развернута, обновляем отображение
+      if (tasksDetailsExpanded) {
+        renderTasksDetailsFromCache();
+      }
+    }).catch(error => {
+      console.error('Ошибка загрузки детальных данных:', error);
+    });
+  }
+  
   // Если секция была развернута, восстанавливаем данные
   if (tasksDetailsExpanded) {
     const detailsContainer = $('#tasksDetailsContainer');
     if (detailsContainer) {
       detailsContainer.classList.add('expanded');
     }
-    // Восстанавливаем данные из кеша или загружаем заново
+    // Восстанавливаем данные из кеша или показываем загрузку
     if (cachedTasksDetails) {
       renderTasksDetailsFromCache();
     } else {
-      await renderTasksDetails();
+      const detailsList = $('#tasksDetailsList');
+      if (detailsList) {
+        detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+      }
     }
   }
   
@@ -2061,13 +2081,29 @@ async function renderTasks() {
           // Обновляем кеш статистики (всегда, даже если нули)
           cachedTasksStats = result.data;
           console.log('Кеш статистики обновлен:', cachedTasksStats);
+          console.log('Кеш содержит week_start_date?', cachedTasksStats?.week_start_date);
           
-          // Очищаем кеш детальных данных, чтобы при следующем открытии загрузились свежие данные
-          cachedTasksDetails = null;
+          // Загружаем свежие детальные данные сразу после обновления статистики
+          if (result.data && result.data.week_start_date) {
+            console.log('Загружаем свежие детальные данные для недели:', result.data.week_start_date);
+            getAsanaTasksDetailsByWeekStart(result.data.week_start_date).then(tasks => {
+              cachedTasksDetails = tasks;
+              console.log('Свежие детальные данные загружены:', tasks.length, 'задач');
+              // Если секция развернута, обновляем отображение
+              if (tasksDetailsExpanded) {
+                renderTasksDetailsFromCache();
+              }
+            }).catch(error => {
+              console.error('Ошибка загрузки свежих детальных данных:', error);
+            });
+          }
           
-          // Если секция подробностей развернута, обновляем данные
+          // Если секция подробностей развернута, показываем загрузку
           if (tasksDetailsExpanded) {
-            await renderTasksDetails();
+            const detailsList = $('#tasksDetailsList');
+            if (detailsList) {
+              detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+            }
           }
           
           alert('Данные успешно обновлены!');
@@ -2083,12 +2119,27 @@ async function renderTasks() {
           cachedTasksStats = stats;
           console.log('Кеш статистики обновлен:', cachedTasksStats);
           
-          // Очищаем кеш детальных данных
-          cachedTasksDetails = null;
+          // Загружаем свежие детальные данные сразу после обновления статистики
+          if (stats && stats.week_start_date) {
+            console.log('Загружаем свежие детальные данные для недели:', stats.week_start_date);
+            getAsanaTasksDetailsByWeekStart(stats.week_start_date).then(tasks => {
+              cachedTasksDetails = tasks;
+              console.log('Свежие детальные данные загружены:', tasks.length, 'задач');
+              // Если секция развернута, обновляем отображение
+              if (tasksDetailsExpanded) {
+                renderTasksDetailsFromCache();
+              }
+            }).catch(error => {
+              console.error('Ошибка загрузки свежих детальных данных:', error);
+            });
+          }
           
-          // Если секция подробностей развернута, обновляем данные
+          // Если секция подробностей развернута, показываем загрузку
           if (tasksDetailsExpanded) {
-            await renderTasksDetails();
+            const detailsList = $('#tasksDetailsList');
+            if (detailsList) {
+              detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+            }
           }
           
           alert('Данные успешно обновлены!');
@@ -2123,8 +2174,26 @@ async function renderTasks() {
       tasksDetailsExpanded = !tasksDetailsExpanded;
       
       if (tasksDetailsExpanded) {
-        // Загружаем данные перед раскрытием
-        await renderTasksDetails();
+        // Если данные уже в кеше, показываем их сразу
+        if (cachedTasksDetails && cachedTasksDetails.length > 0) {
+          renderTasksDetailsFromCache();
+        } else {
+          // Если данных нет, показываем загрузку и загружаем
+          const detailsList = $('#tasksDetailsList');
+          if (detailsList) {
+            detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+          }
+          
+          // Загружаем данные, используя week_start_date из статистики
+          if (cachedTasksStats && cachedTasksStats.week_start_date) {
+            const tasks = await getAsanaTasksDetailsByWeekStart(cachedTasksStats.week_start_date);
+            cachedTasksDetails = tasks;
+            renderTasksDetailsFromCache();
+          } else {
+            // Если нет статистики, используем старую функцию
+            await renderTasksDetails();
+          }
+        }
         
         // Раскрываем с анимацией
         detailsContainer.classList.add('expanded');
@@ -2138,32 +2207,15 @@ async function renderTasks() {
   }
 }
 
-// Функция для получения детальных данных о задачах из asana_tasks
-async function getAsanaTasksDetails() {
+// Функция для получения детальных данных о задачах по week_start_date
+async function getAsanaTasksDetailsByWeekStart(weekStartStr) {
   try {
     if (!supabaseClient) {
       console.error('Supabase клиент не инициализирован');
       return [];
     }
     
-    // Используем week_start_date из кешированной статистики, если она есть
-    // Это гарантирует, что мы запрашиваем данные для той же недели, что и статистика
-    let weekStartStr;
-    if (cachedTasksStats && cachedTasksStats.week_start_date) {
-      weekStartStr = cachedTasksStats.week_start_date;
-      console.log('getAsanaTasksDetails: Используем week_start_date из кеша:', weekStartStr);
-    } else {
-      // Если кеша нет, рассчитываем начало недели (как в getAsanaStats)
-      const now = new Date();
-      const day = now.getDay();
-      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(now.getFullYear(), now.getMonth(), diff);
-      monday.setHours(0, 0, 0, 0);
-      weekStartStr = monday.toISOString().split('T')[0];
-      console.log('getAsanaTasksDetails: Рассчитали week_start_date:', weekStartStr);
-    }
-    
-    console.log('getAsanaTasksDetails: Запрашиваем данные для недели:', weekStartStr);
+    console.log('getAsanaTasksDetailsByWeekStart: Запрашиваем данные для недели:', weekStartStr);
     
     // Запрашиваем данные из Supabase
     const { data, error } = await supabaseClient
@@ -2172,25 +2224,43 @@ async function getAsanaTasksDetails() {
       .eq('week_start_date', weekStartStr)
       .order('completed_at', { ascending: false });
     
-    console.log('getAsanaTasksDetails: Ответ от Supabase:', { data, error, dataLength: data?.length });
+    console.log('getAsanaTasksDetailsByWeekStart: Ответ от Supabase:', { data, error, dataLength: data?.length });
     
     if (error && error.code !== 'PGRST116') {
       console.error('Ошибка получения деталей задач Asana:', error);
       throw error;
     }
     
-    if (!data || data.length === 0) {
-      console.log('getAsanaTasksDetails: Данных нет для недели:', weekStartStr);
-      // Попробуем получить все данные для отладки
-      const { data: allData, error: allError } = await supabaseClient
-        .from('asana_tasks')
-        .select('task_name, quantity, completed_at, week_start_date')
-        .order('week_start_date', { ascending: false })
-        .limit(10);
-      console.log('getAsanaTasksDetails: Последние 10 записей в таблице:', { allData, allError });
+    return data || [];
+  } catch (error) {
+    console.error('Ошибка в getAsanaTasksDetailsByWeekStart:', error);
+    return [];
+  }
+}
+
+// Функция для получения детальных данных о задачах из asana_tasks (старая версия для обратной совместимости)
+async function getAsanaTasksDetails() {
+  try {
+    if (!supabaseClient) {
+      console.error('Supabase клиент не инициализирован');
+      return [];
     }
     
-    return data || [];
+    // Используем week_start_date из кешированной статистики, если она есть
+    let weekStartStr;
+    if (cachedTasksStats && cachedTasksStats.week_start_date) {
+      weekStartStr = cachedTasksStats.week_start_date;
+    } else {
+      // Если кеша нет, рассчитываем начало недели
+      const now = new Date();
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.getFullYear(), now.getMonth(), diff);
+      monday.setHours(0, 0, 0, 0);
+      weekStartStr = monday.toISOString().split('T')[0];
+    }
+    
+    return await getAsanaTasksDetailsByWeekStart(weekStartStr);
   } catch (error) {
     console.error('Ошибка в getAsanaTasksDetails:', error);
     return [];
