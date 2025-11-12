@@ -1950,7 +1950,7 @@ async function renderTasks() {
     </div>
     
     <div style="margin-top: 16px;">
-      <button id="refreshStats" class="btn" style="width: 100%;">Обновить данные</button>
+      <button id="refreshStats" class="btn" style="width: 100%; position: relative; z-index: 1; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;">Обновить данные</button>
       <p class="muted" style="margin-top: 8px; font-size: 11px; line-height: 1.4;">
         Нажмите кнопку для получения актуальной статистики из Asana.
       </p>
