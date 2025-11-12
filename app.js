@@ -2154,6 +2154,8 @@ async function getAsanaTasksDetails() {
     monday.setHours(0, 0, 0, 0);
     const weekStartStr = monday.toISOString().split('T')[0];
     
+    console.log('getAsanaTasksDetails: Запрашиваем данные для недели:', weekStartStr);
+    
     // Запрашиваем данные из Supabase
     const { data, error } = await supabaseClient
       .from('asana_tasks')
@@ -2161,9 +2163,22 @@ async function getAsanaTasksDetails() {
       .eq('week_start_date', weekStartStr)
       .order('completed_at', { ascending: false });
     
+    console.log('getAsanaTasksDetails: Ответ от Supabase:', { data, error, dataLength: data?.length });
+    
     if (error && error.code !== 'PGRST116') {
       console.error('Ошибка получения деталей задач Asana:', error);
       throw error;
+    }
+    
+    if (!data || data.length === 0) {
+      console.log('getAsanaTasksDetails: Данных нет для недели:', weekStartStr);
+      // Попробуем получить все данные для отладки
+      const { data: allData, error: allError } = await supabaseClient
+        .from('asana_tasks')
+        .select('task_name, quantity, completed_at, week_start_date')
+        .order('week_start_date', { ascending: false })
+        .limit(10);
+      console.log('getAsanaTasksDetails: Последние 10 записей в таблице:', { allData, allError });
     }
     
     return data || [];
