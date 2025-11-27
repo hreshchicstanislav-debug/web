@@ -1809,118 +1809,195 @@ async function updateDayInMonthList(date, updatedRec) {
   console.log('День обновлен в списке:', date);
 }
 
-// Функция для получения статистики Asana из Supabase
+function getEmptyAsanaStats() {
+      return {
+    weekStartDate: null,
+    weekEndDate: null,
+    weekLoad: 0,
+        plan: 80,
+    doneFactThisWeek: 0,
+    carryOverFromPrev: 0,
+    overtimeQty: 0,
+    doneQty: 0,
+    toShootQty: 0,
+    remainingToPlan: 80,
+    onHandQty: 0,
+    warehouseQty: 0,
+    shotNotProcessedQty: 0,
+    qErrorsCount: 0,
+    completedCount: 0,
+    pendingCount: 0,
+    totalPlan: 0,
+    version: 'unknown',
+    updatedAt: null
+  };
+}
+
+// Функция для получения статистики Asana напрямую из Edge Function
+// ============================================================================
+// Вкладка "Задачи" (Tasks Tab) - Логика работы с Asana статистикой
+// ============================================================================
+// 
+// Модель данных (v2-tasks-kpi-неделя-по-fact):
+// - Все KPI рассчитываются на основе фактических дат съёмки (week_shot) и обработки (week_processed)
+// - Неделя определяется по week_shot и week_processed, а не по плановой дате (due_on/week_start_date)
+// - Используется поле q (количество товаров), legacy поле quantity удалено
+// - Поле due_on сохраняется как справочное, но не участвует в расчётах KPI
+// 
+// Основные функции:
+// - getAsanaStats(): получает статистику через Edge Function fetch-asana-stats
+// - updateTasksCards(stats): обновляет карточки KPI на основе нормализованных данных
+// - renderTasks(): рендерит вкладку "Задачи" с карточками и кнопками
+// - getAsanaTasksDetailsByWeekStart(weekStartStr): получает детали задач по неделе (фильтрация по week_shot/week_processed)
+// - renderTasksDetailsFromCache(): отображает таблицу с деталями задач
+// ============================================================================
+
 async function getAsanaStats() {
   try {
     if (!supabaseClient) {
-      console.error('Supabase клиент не инициализирован');
-      // Если есть кеш, возвращаем его вместо нулей
-      if (cachedTasksStats) {
-        console.log('Используем кеш из-за отсутствия клиента');
-        return cachedTasksStats;
-      }
-      return {
-        completed_count: 0,
-        pending_count: 0,
-        total_plan: 0,
-        remaining_to_plan: 80
-      };
+      return cachedTasksStats || getEmptyAsanaStats();
     }
-    
-    // Получаем начало текущей недели (понедельник)
-    const now = new Date();
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(now.getFullYear(), now.getMonth(), diff);
-    monday.setHours(0, 0, 0, 0);
-    const weekStartStr = monday.toISOString().split('T')[0];
-    
-    // Запрашиваем данные из Supabase
-    const { data, error } = await supabaseClient
-      .from('asana_stats')
-      .select('*')
-      .eq('week_start_date', weekStartStr)
-      .single();
-    
-    if (error && error.code !== 'PGRST116') { // PGRST116 = not found
-      console.error('Ошибка получения статистики Asana:', error);
-      // Если есть кеш, возвращаем его вместо ошибки
-      if (cachedTasksStats) {
-        console.log('Используем кеш из-за ошибки запроса');
-        return cachedTasksStats;
-      }
-      throw error;
+
+    const { data: result, error } = await supabaseClient.functions.invoke('fetch-asana-stats', {
+      body: {}
+    });
+
+    if (error) {
+      console.error('[[TasksTab Error]] Ошибка вызова Edge Function:', error);
+      throw new Error(error.message || 'Ошибка вызова Edge Function');
     }
-    
-    // Если данных нет, проверяем кеш
-    if (!data) {
-      // Если есть кеш, возвращаем его
-      if (cachedTasksStats) {
-        console.log('Данных нет в Supabase, используем кеш');
-        return cachedTasksStats;
-      }
-      return {
-        completed_count: 0,
-        pending_count: 0,
-        total_plan: 0,
-        remaining_to_plan: 80
-      };
+
+    // Логируем полный ответ Edge Function (один раз, без спама)
+    console.log('[[TasksTab Debug]] Полный ответ Edge Function:', JSON.stringify(result, null, 2));
+
+    if (!result) {
+      console.warn('[[TasksTab Warning]] Edge Function вернула пустой ответ (result is null/undefined)');
+      return cachedTasksStats || getEmptyAsanaStats();
     }
-    
-    // Сохраняем в кеш только если данные есть
-    cachedTasksStats = data;
-    console.log('Данные получены из Supabase и сохранены в кеш:', data);
-    return data;
-  } catch (error) {
-    console.error('Ошибка получения статистики Asana:', error);
-    // Если есть кеш, возвращаем его вместо нулей
-    if (cachedTasksStats) {
-      console.log('Используем кеш из-за исключения');
-      return cachedTasksStats;
+
+    if (result.success === false || result.data === null) {
+      const message = result.message || 'Edge Function вернула ошибку';
+      console.warn('[[TasksTab Warning]] Edge Function вернула ошибку:', message, result.error || '');
+      return cachedTasksStats || getEmptyAsanaStats();
     }
-    return {
-      completed_count: 0,
-      pending_count: 0,
-      total_plan: 0,
-      remaining_to_plan: 80
+
+    if (!result.data) {
+      console.warn('[[TasksTab Warning]] Edge Function вернула пустой ответ по статистике Asana (data is null/undefined)');
+      return cachedTasksStats || getEmptyAsanaStats();
+    }
+
+    const data = result.data;
+    const doneFactThisWeek = data.done_fact_this_week ?? 0;
+    const carryOverFromPrev = data.carry_over_from_prev ?? 0;
+    const doneQty = data.done_qty ?? doneFactThisWeek + carryOverFromPrev;
+    
+    const normalizedStats = {
+      weekStartDate: data.week_start_date || null, // 'YYYY-MM-DD' - важно для getAsanaTasksDetailsByWeekStart
+      weekEndDate: data.week_end_date || null,
+      weekLoad: data.week_load ?? 0,
+      plan: data.plan ?? 80,
+      doneFactThisWeek,
+      carryOverFromPrev,
+      overtimeQty: data.overtime_qty ?? 0,
+      doneQty,
+      toShootQty: data.to_shoot_qty ?? 0,
+      remainingToPlan:
+        data.remaining_to_plan ??
+        Math.max((data.plan ?? 80) - doneFactThisWeek, 0),
+      onHandQty: data.on_hand_qty ?? 0,
+      warehouseQty: data.warehouse_qty ?? 0,
+      shotNotProcessedQty: data.shot_not_processed_qty ?? 0,
+      qErrorsCount: data.q_errors_count ?? 0,
+      completedCount: data.completed_count ?? 0,
+      pendingCount: data.pending_count ?? 0,
+      totalPlan: data.total_plan ?? 0,
+      version: data.version || 'unknown',
+      updatedAt: data.updated_at || null,
+      _raw: data
     };
+
+    cachedTasksStats = normalizedStats;
+    
+    // Сохраняем weekStartDate для использования в деталях задач
+    if (normalizedStats.weekStartDate) {
+      lastAsanaWeekStart = normalizedStats.weekStartDate;
+    } else {
+      lastAsanaWeekStart = null;
+    }
+    
+    return normalizedStats;
+  } catch (error) {
+    console.error('[[TasksTab Error]] Ошибка получения статистики Asana через Edge Function:', error);
+    return cachedTasksStats || getEmptyAsanaStats();
   }
 }
 
 // Функция обновления значений в карточках без пересоздания HTML
+// Принимает объект stats с нормализованными полями (doneQty, toShootQty, weekLoad, plan, remainingToPlan)
 function updateTasksCards(stats) {
-  console.log('updateTasksCards вызвана с данными:', stats);
-  
+  const doneQty = stats.doneQty ?? stats.done_qty ?? 0;
+  const doneFact = stats.doneFactThisWeek ?? stats.done_fact_this_week ?? 0;
+  const carryOver = stats.carryOverFromPrev ?? stats.carry_over_from_prev ?? 0;
+  const overtimeQty = stats.overtimeQty ?? stats.overtime_qty ?? 0;
+  const toShootQty = stats.toShootQty ?? stats.to_shoot_qty ?? 0;
+  const weekLoad = stats.weekLoad ?? stats.week_load ?? 0;
+  const plan = stats.plan ?? 80;
+  const remainingToPlan =
+    stats.remainingToPlan ??
+    stats.remaining_to_plan ??
+    Math.max(plan - doneFact, 0);
+  const onHandQty = stats.onHandQty ?? stats.on_hand_qty ?? 0;
+  const warehouseQty = stats.warehouseQty ?? stats.warehouse_qty ?? 0;
+  const shotNotProcessedQty =
+    stats.shotNotProcessedQty ?? stats.shot_not_processed_qty ?? 0;
+  const qErrorsCount = stats.qErrorsCount ?? stats.q_errors_count ?? 0;
+
   const completedValue = $('#completedCount');
   const pendingValue = $('#pendingCount');
-  const totalPlanValue = $('#totalPlan');
+  const planValue = $('#planValue');
+  const weekLoadValue = $('#weekLoadValue');
   const remainingValue = $('#remainingCount');
   const remainingText = $('#remainingText');
-  const card4 = $('#cardRemaining');
-  
-  console.log('Найденные элементы:', {
-    completedValue: !!completedValue,
-    pendingValue: !!pendingValue,
-    totalPlanValue: !!totalPlanValue,
-    remainingValue: !!remainingValue,
-    remainingText: !!remainingText,
-    card4: !!card4
-  });
-  
-  if (completedValue) completedValue.textContent = stats.completed_count || 0;
-  if (pendingValue) pendingValue.textContent = stats.pending_count || 0;
-  if (totalPlanValue) totalPlanValue.textContent = stats.total_plan || 0;
-  if (remainingValue) remainingValue.textContent = stats.remaining_to_plan || 0;
-  
-  // Обновляем стили и текст для карточки "До выполнения плана"
-  if (card4 && remainingValue && remainingText) {
-    const isPositive = stats.remaining_to_plan > 0;
-    card4.style.background = isPositive ? '#fce4ec' : '#e8f5e9';
-    card4.style.borderColor = isPositive ? '#e91e63' : '#4caf50';
-    const title = card4.querySelector('h3');
+  const cardRemaining = $('#cardRemaining');
+  const doneFactValue = $('#doneFactValue');
+  const carryOverValue = $('#carryOverValue');
+  const carryOverRow = $('#carryOverRow');
+  const overtimeValue = $('#overtimeQty');
+  const overtimeCard = $('#overtimeCard');
+
+  if (completedValue) completedValue.textContent = doneQty;
+  if (pendingValue) pendingValue.textContent = toShootQty;
+  if (planValue) planValue.textContent = plan;
+  if (weekLoadValue) weekLoadValue.textContent = weekLoad;
+  if (remainingValue) remainingValue.textContent = remainingToPlan;
+  if (doneFactValue) doneFactValue.textContent = doneFact;
+  if (carryOverValue) carryOverValue.textContent = carryOver;
+  if (carryOverRow) carryOverRow.style.opacity = carryOver > 0 ? '1' : '0.5';
+  if (overtimeValue) overtimeValue.textContent = overtimeQty;
+  if (overtimeCard) overtimeCard.style.opacity = overtimeQty > 0 ? '1' : '0.5';
+
+  if (cardRemaining && remainingValue && remainingText) {
+    const isPositive = remainingToPlan > 0;
+    cardRemaining.style.background = isPositive ? '#fce4ec' : '#e8f5e9';
+    cardRemaining.style.borderColor = isPositive ? '#e91e63' : '#4caf50';
+    const title = cardRemaining.querySelector('h3');
     if (title) title.style.color = isPositive ? '#880e4f' : '#2e7d32';
     remainingValue.style.color = isPositive ? '#c2185b' : '#1b5e20';
-    remainingText.textContent = `товаров (план: 80${stats.remaining_to_plan < 0 ? ', перевыполнение: ' + Math.abs(stats.remaining_to_plan) : ''})`;
+    remainingText.textContent = `товаров (план: ${plan})`;
+  }
+  
+  const shotNotProcessedEl = $('#secondaryShot');
+  const onHandEl = $('#secondaryOnHand');
+  const warehouseEl = $('#secondaryWarehouse');
+  const qErrorsValueEl = $('#qErrorsValue');
+  const qErrorsIconEl = $('#qErrorsIcon');
+
+  if (shotNotProcessedEl) shotNotProcessedEl.textContent = shotNotProcessedQty;
+  if (onHandEl) onHandEl.textContent = onHandQty;
+  if (warehouseEl) warehouseEl.textContent = warehouseQty;
+  if (qErrorsValueEl) qErrorsValueEl.textContent = qErrorsCount;
+  if (qErrorsIconEl) {
+    qErrorsIconEl.style.visibility = qErrorsCount > 0 ? 'visible' : 'hidden';
   }
 }
 
@@ -1929,6 +2006,7 @@ function updateTasksCards(stats) {
 let tasksDetailsExpanded = false;
 let cachedTasksDetails = null;
 let cachedTasksStats = null; // Кеш для статистики
+let lastAsanaWeekStart = null; // string | null - последняя неделя Asana для загрузки деталей задач
 
 async function renderTasks() {
   const app = $('#app');
@@ -1936,7 +2014,6 @@ async function renderTasks() {
   // Если есть кешированная статистика, используем её для быстрого отображения
   let stats;
   if (cachedTasksStats) {
-    console.log('Используем кешированную статистику:', cachedTasksStats);
     stats = cachedTasksStats;
   } else {
     // Показываем загрузку только если нет кеша
@@ -1947,78 +2024,142 @@ async function renderTasks() {
     
     // Получаем статистику
     stats = await getAsanaStats();
-    // Сохраняем в кеш всегда (getAsanaStats уже сохраняет в кеш, но на всякий случай)
     if (stats) {
       cachedTasksStats = stats;
-      console.log('Статистика сохранена в кеш:', stats);
+      // Сохраняем weekStartDate для использования в деталях задач (уже сохранено в getAsanaStats)
+      // lastAsanaWeekStart уже обновлён в getAsanaStats
     }
   }
+  
+  // Используем нормализованные данные из stats объекта
+  const doneFact = stats.doneFactThisWeek ?? stats.done_fact_this_week ?? 0;
+  const carryOver = stats.carryOverFromPrev ?? stats.carry_over_from_prev ?? 0;
+  const overtimeQty = stats.overtimeQty ?? stats.overtime_qty ?? 0;
+  const doneQty = stats.doneQty ?? stats.done_qty ?? (doneFact + carryOver);
+  const toShootQty = stats.toShootQty ?? stats.to_shoot_qty ?? 0;
+  const plan = stats.plan ?? 80;
+  const weekLoad = stats.weekLoad ?? stats.week_load ?? doneFact + toShootQty;
+  const remainingToPlan =
+    stats.remainingToPlan ??
+    stats.remaining_to_plan ??
+    Math.max(plan - doneFact, 0);
+  const onHandQty = stats.onHandQty ?? stats.on_hand_qty ?? 0;
+  const warehouseQty = stats.warehouseQty ?? stats.warehouse_qty ?? 0;
+  const shotNotProcessedQty =
+    stats.shotNotProcessedQty ?? stats.shot_not_processed_qty ?? 0;
+  const qErrorsCount = stats.qErrorsCount ?? stats.q_errors_count ?? 0;
   
   app.innerHTML = `
     <h1 style="margin: 0 0 12px 0; font-size: 24px;">Задачи Asana</h1>
     
-    <div id="tasksGrid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 12px;">
-      <!-- Карточка 1: Отснято на неделе -->
-      <div style="background: #e8f5e9; border: 1px solid #4caf50; border-radius: 8px; padding: 12px;">
-        <h3 style="margin: 0 0 8px 0; color: #2e7d32; font-size: 12px; font-weight: 500;">Отснято на неделе</h3>
-        <div id="completedCount" style="font-size: 24px; font-weight: bold; color: #1b5e20;">${stats.completed_count || 0}</div>
-        <p style="margin: 4px 0 0 0; color: #666; font-size: 11px;">товаров</p>
-      </div>
-      
-      <!-- Карточка 2: Предстоит отснять -->
-      <div style="background: #fff3e0; border: 1px solid #ff9800; border-radius: 8px; padding: 12px;">
-        <h3 style="margin: 0 0 8px 0; color: #e65100; font-size: 12px; font-weight: 500;">Предстоит отснять</h3>
-        <div id="pendingCount" style="font-size: 24px; font-weight: bold; color: #bf360c;">${stats.pending_count || 0}</div>
-        <p style="margin: 4px 0 0 0; color: #666; font-size: 11px;">товаров</p>
-      </div>
-      
-      <!-- Карточка 3: Запланировано товаров на неделю -->
-      <div style="background: #e3f2fd; border: 1px solid #2196f3; border-radius: 8px; padding: 12px;">
-        <h3 style="margin: 0 0 8px 0; color: #1565c0; font-size: 12px; font-weight: 500;">Запланировано</h3>
-        <div id="totalPlan" style="font-size: 24px; font-weight: bold; color: #0d47a1;">${stats.total_plan || 0}</div>
-        <p style="margin: 4px 0 0 0; color: #666; font-size: 11px;">товаров</p>
-      </div>
-      
-      <!-- Карточка 4: До выполнения плана -->
-      <div id="cardRemaining" style="background: ${stats.remaining_to_plan > 0 ? '#fce4ec' : '#e8f5e9'}; border: 1px solid ${stats.remaining_to_plan > 0 ? '#e91e63' : '#4caf50'}; border-radius: 8px; padding: 12px;">
-        <h3 style="margin: 0 0 8px 0; color: ${stats.remaining_to_plan > 0 ? '#880e4f' : '#2e7d32'}; font-size: 12px; font-weight: 500;">До выполнения плана</h3>
-        <div id="remainingCount" style="font-size: 24px; font-weight: bold; color: ${stats.remaining_to_plan > 0 ? '#c2185b' : '#1b5e20'};">
-          ${stats.remaining_to_plan || 0}
+    <div id="tasksGrid" class="kpi-grid">
+      <div class="kpi-card kpi-card--done">
+        <h3 class="kpi-title">Сделано</h3>
+        <div id="completedCount" class="kpi-value kpi-value--done">${doneQty}</div>
+        <div class="kpi-meta kpi-meta--primary">
+          <span>Факт</span>
+          <strong id="doneFactValue">${doneFact}</strong>
         </div>
-        <p id="remainingText" style="margin: 4px 0 0 0; color: #666; font-size: 11px;">товаров (план: 80${stats.remaining_to_plan < 0 ? ', перевыполнение: ' + Math.abs(stats.remaining_to_plan) : ''})</p>
+        <div id="carryOverRow" class="kpi-meta ${carryOver > 0 ? '' : 'kpi-meta--muted'}">
+          <span>Переработка с прошлой недели</span>
+          <strong id="carryOverValue">${carryOver}</strong>
+        </div>
+      </div>
+      
+      <div class="kpi-card kpi-card--pending">
+        <h3 class="kpi-title">Предстоит отснять</h3>
+        <div id="pendingCount" class="kpi-value kpi-value--pending">${toShootQty}</div>
+        <p class="kpi-subtext">товаров</p>
+      </div>
+      
+      <div class="kpi-card kpi-card--plan">
+        <h3 class="kpi-title">Запланировано</h3>
+        <div id="planValue" class="kpi-value kpi-value--plan">${plan}</div>
+        <p class="kpi-subtext">динамический план недели</p>
+        <div class="kpi-meta">
+          <span>Нагрузка недели</span>
+          <strong id="weekLoadValue">${weekLoad}</strong>
+        </div>
+      </div>
+      
+      <div id="cardRemaining" class="kpi-card kpi-card--remaining ${remainingToPlan > 0 ? '' : 'kpi-card--remaining-success'}">
+        <h3 class="kpi-title">До выполнения плана</h3>
+        <div id="remainingCount" class="kpi-value ${remainingToPlan > 0 ? 'kpi-value--remaining' : 'kpi-value--remaining-success'}">
+          ${remainingToPlan}
+        </div>
+        <p id="remainingText" class="kpi-subtext">товаров (план: ${plan})</p>
+      </div>
+    
+      <div id="overtimeCard" class="kpi-card kpi-card--overtime ${overtimeQty > 0 ? '' : 'kpi-card--muted'}">
+        <h3 class="kpi-title">Переработка этой недели</h3>
+        <div id="overtimeQty" class="kpi-value kpi-value--overtime">${overtimeQty}</div>
+        <p class="kpi-subtext">товаров сверх плана</p>
+      </div>
+    </div>
+      
+    <div id="secondaryMetrics" class="secondary-metrics">
+      <div class="secondary-metrics-row">
+        <span>Сфоткано, но не обработано</span>
+        <strong id="secondaryShot">${shotNotProcessedQty}</strong>
+      </div>
+      <div class="secondary-metrics-row">
+        <span>Уже на руках</span>
+        <strong id="secondaryOnHand">${onHandQty}</strong>
+      </div>
+      <div class="secondary-metrics-row">
+        <span>Нужно взять со склада</span>
+        <strong id="secondaryWarehouse">${warehouseQty}</strong>
+      </div>
+      <div class="secondary-metrics-row ${qErrorsCount > 0 ? 'secondary-metrics-row--alert' : ''}">
+        <span>Ошибки Q <span id="qErrorsIcon" class="q-errors-icon ${qErrorsCount > 0 ? '' : 'is-hidden'}">⚠️</span></span>
+        <strong id="qErrorsValue">${qErrorsCount}</strong>
       </div>
     </div>
     
     <div style="margin-top: 16px;">
-      <button id="refreshStats" class="btn" style="width: 100%; position: relative; z-index: 1; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;">Обновить данные</button>
+      <button id="refreshStats" class="btn btn-full">Обновить данные</button>
       <p class="muted" style="margin-top: 8px; font-size: 11px; line-height: 1.4;">
         Нажмите кнопку для получения актуальной статистики из Asana.
       </p>
     </div>
     
     <div style="margin-top: 16px;">
-      <button id="showDetails" class="btn" style="width: 100%; position: relative; z-index: 1; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;">Показать подробности</button>
+      <button id="showDetails" class="btn btn-full">Показать подробности</button>
     </div>
     
     <div id="tasksDetailsContainer" class="tasks-details-container ${tasksDetailsExpanded ? 'expanded' : ''}" style="margin-top: 16px;">
-      <div id="tasksDetailsList" style="background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 8px; padding: 16px;"></div>
+      <div id="tasksDetailsList" class="tasks-details-panel"></div>
     </div>
   `;
   
+  // Обновляем вторичные показатели сразу после рендера
+  // Передаём нормализованные данные в updateTasksCards
+  updateTasksCards({
+    doneQty,
+    doneFactThisWeek: doneFact,
+    carryOverFromPrev: carryOver,
+    overtimeQty,
+    toShootQty,
+    weekLoad,
+    plan,
+    remainingToPlan,
+    onHandQty,
+    warehouseQty,
+    shotNotProcessedQty,
+    qErrorsCount,
+    weekStartDate: stats.weekStartDate || stats.week_start_date || null
+  });
+  
   // Загружаем детальные данные сразу (в фоне), чтобы они были готовы при нажатии "Показать подробности"
-  // Используем week_start_date из статистики для точного запроса
-  if (stats && stats.week_start_date) {
-    console.log('Загружаем детальные данные для недели:', stats.week_start_date);
-    // Загружаем асинхронно, не блокируя отображение страницы
-    getAsanaTasksDetailsByWeekStart(stats.week_start_date).then(tasks => {
+  const weekStart = lastAsanaWeekStart || stats.weekStartDate || stats.week_start_date;
+  if (stats && weekStart) {
+    getAsanaTasksDetailsByWeekStart(weekStart).then(tasks => {
       cachedTasksDetails = tasks;
-      console.log('Детальные данные загружены и сохранены в кеш:', tasks.length, 'задач');
-      // Если секция уже развернута, обновляем отображение
       if (tasksDetailsExpanded) {
         renderTasksDetailsFromCache();
       }
     }).catch(error => {
-      console.error('Ошибка загрузки детальных данных:', error);
+      console.error('[[TasksTab Details Error]] Ошибка загрузки детальных данных:', error);
     });
   }
   
@@ -2041,60 +2182,35 @@ async function renderTasks() {
   
   // Обработчик кнопки обновления
   const refreshBtn = $('#refreshStats');
-  console.log('Кнопка refreshStats найдена:', !!refreshBtn);
   
   if (refreshBtn) {
-    console.log('Добавляем обработчик клика на кнопку обновления');
     refreshBtn.addEventListener('click', async () => {
-      console.log('Кнопка "Обновить данные" нажата');
       refreshBtn.disabled = true;
       refreshBtn.textContent = 'Обновление...';
       
       try {
-        console.log('Вызываем Edge Function через Supabase client');
+        // Используем функцию getAsanaStats для получения данных (избегаем дублирования кода)
+        const stats = await getAsanaStats();
         
-        // Используем Supabase client для вызова Edge Function (избегаем проблем с CORS)
-        if (!supabaseClient) {
-          throw new Error('Supabase client не инициализирован');
+        if (!stats) {
+          throw new Error('Не удалось получить статистику Asana');
         }
-        
-        const { data: result, error: invokeError } = await supabaseClient.functions.invoke('fetch-asana-stats', {
-          body: {}
-        });
-        
-        console.log('Ответ от Edge Function:', result);
-        console.log('Ошибка (если есть):', invokeError);
-        
-        if (invokeError) {
-          throw new Error(invokeError.message || 'Ошибка вызова Edge Function');
-        }
-        
-        if (!result || !result.success) {
-          throw new Error(result?.error || 'Ошибка обновления данных');
-        }
-        
-        // Используем данные из ответа Edge Function
-        if (result.data) {
-          console.log('Обновляем карточки данными из ответа:', result.data);
-          updateTasksCards(result.data);
           
-          // Обновляем кеш статистики (всегда, даже если нули)
-          cachedTasksStats = result.data;
-          console.log('Кеш статистики обновлен:', cachedTasksStats);
-          console.log('Кеш содержит week_start_date?', cachedTasksStats?.week_start_date);
+          // Обновляем карточки нормализованными данными
+        updateTasksCards(stats);
+        
+        // Сохраняем weekStartDate для использования в деталях задач (уже сохранено в getAsanaStats)
+        // lastAsanaWeekStart уже обновлён в getAsanaStats
           
-          // Загружаем свежие детальные данные сразу после обновления статистики
-          if (result.data && result.data.week_start_date) {
-            console.log('Загружаем свежие детальные данные для недели:', result.data.week_start_date);
-            getAsanaTasksDetailsByWeekStart(result.data.week_start_date).then(tasks => {
+          // Загружаем свежие детальные данные
+        if (stats.weekStartDate) {
+          getAsanaTasksDetailsByWeekStart(stats.weekStartDate).then(tasks => {
               cachedTasksDetails = tasks;
-              console.log('Свежие детальные данные загружены:', tasks.length, 'задач');
-              // Если секция развернута, обновляем отображение
               if (tasksDetailsExpanded) {
                 renderTasksDetailsFromCache();
               }
             }).catch(error => {
-              console.error('Ошибка загрузки свежих детальных данных:', error);
+              console.error('[[TasksTab Details Error]] Ошибка загрузки детальных данных:', error);
             });
           }
           
@@ -2107,43 +2223,6 @@ async function renderTasks() {
           }
           
           alert('Данные успешно обновлены!');
-        } else {
-          // Если данных нет в ответе, получаем из Supabase с небольшой задержкой
-          console.log('Данных нет в ответе, получаем из Supabase...');
-          await new Promise(resolve => setTimeout(resolve, 500));
-          const stats = await getAsanaStats();
-          console.log('Получены данные из Supabase:', stats);
-          updateTasksCards(stats);
-          
-          // Обновляем кеш статистики (всегда, даже если нули)
-          cachedTasksStats = stats;
-          console.log('Кеш статистики обновлен:', cachedTasksStats);
-          
-          // Загружаем свежие детальные данные сразу после обновления статистики
-          if (stats && stats.week_start_date) {
-            console.log('Загружаем свежие детальные данные для недели:', stats.week_start_date);
-            getAsanaTasksDetailsByWeekStart(stats.week_start_date).then(tasks => {
-              cachedTasksDetails = tasks;
-              console.log('Свежие детальные данные загружены:', tasks.length, 'задач');
-              // Если секция развернута, обновляем отображение
-              if (tasksDetailsExpanded) {
-                renderTasksDetailsFromCache();
-              }
-            }).catch(error => {
-              console.error('Ошибка загрузки свежих детальных данных:', error);
-            });
-          }
-          
-          // Если секция подробностей развернута, показываем загрузку
-          if (tasksDetailsExpanded) {
-            const detailsList = $('#tasksDetailsList');
-            if (detailsList) {
-              detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
-            }
-          }
-          
-          alert('Данные успешно обновлены!');
-        }
         
         refreshBtn.textContent = 'Обновить данные';
         refreshBtn.disabled = false;
@@ -2184,15 +2263,19 @@ async function renderTasks() {
             detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
           }
           
-          // Загружаем данные, используя week_start_date из статистики
-          if (cachedTasksStats && cachedTasksStats.week_start_date) {
-            const tasks = await getAsanaTasksDetailsByWeekStart(cachedTasksStats.week_start_date);
+          // Загружаем данные, используя lastAsanaWeekStart
+          if (!lastAsanaWeekStart) {
+            console.warn('[TasksTab Details Warning] Невозможно загрузить детали задач: weekStartDate не задан. Сначала обнови статистику Asana.');
+            const detailsList = $('#tasksDetailsList');
+            if (detailsList) {
+              detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Необходимо сначала обновить статистику Asana</p>';
+            }
+            return;
+          }
+          
+          const tasks = await getAsanaTasksDetailsByWeekStart(lastAsanaWeekStart);
             cachedTasksDetails = tasks;
             renderTasksDetailsFromCache();
-          } else {
-            // Если нет статистики, используем старую функцию
-            await renderTasksDetails();
-          }
         }
         
         // Раскрываем с анимацией
@@ -2207,33 +2290,62 @@ async function renderTasks() {
   }
 }
 
-// Функция для получения детальных данных о задачах по week_start_date
+// Функция для получения детальных данных о задачах по неделе
+// Новая модель: фильтрация по week_shot и week_processed (фактические даты), а не по week_start_date (плановая дата)
 async function getAsanaTasksDetailsByWeekStart(weekStartStr) {
   try {
     if (!supabaseClient) {
-      console.error('Supabase клиент не инициализирован');
+      console.error('[[TasksTab Details Error]] Supabase клиент не инициализирован');
       return [];
     }
     
-    console.log('getAsanaTasksDetailsByWeekStart: Запрашиваем данные для недели:', weekStartStr);
+    if (!weekStartStr || typeof weekStartStr !== 'string') {
+      console.error('[[TasksTab Details Error]] weekStartStr должен быть строкой в формате YYYY-MM-DD, получено:', weekStartStr);
+      return [];
+    }
     
-    // Запрашиваем данные из Supabase
-    const { data, error } = await supabaseClient
+    console.log('[TasksTab Details Debug] getAsanaTasksDetailsByWeekStart called with weekStartDate =', weekStartStr);
+
+    const { data: rows, error } = await supabaseClient
       .from('asana_tasks')
-      .select('task_name, quantity, completed_at')
-      .eq('week_start_date', weekStartStr)
-      .order('completed_at', { ascending: false });
-    
-    console.log('getAsanaTasksDetailsByWeekStart: Ответ от Supabase:', { data, error, dataLength: data?.length });
+      .select('task_name, q, product_source, shot_at, processed_at, completed_at, due_on, week_start_date, completed, project_gid, assignee_gid')
+      .or(`week_shot.eq.${weekStartStr},week_processed.eq.${weekStartStr},week_start_date.eq.${weekStartStr}`)
+      .order('processed_at', { ascending: false })
+      .order('shot_at', { ascending: false })
+      .order('due_on', { ascending: true });
     
     if (error && error.code !== 'PGRST116') {
-      console.error('Ошибка получения деталей задач Asana:', error);
+      console.error('[[TasksTab Details Error]] Ошибка получения деталей задач:', error);
       throw error;
     }
     
-    return data || [];
+    const safeRows = rows || [];
+    const distinctProjects = Array.from(new Set(safeRows.map(r => r.project_gid).filter(Boolean)));
+    const distinctAssignees = Array.from(new Set(safeRows.map(r => r.assignee_gid).filter(Boolean)));
+
+    // Вычисляем hasQError для каждой строки и подсчитываем ошибки
+    const rowsWithErrors = safeRows.map((row) => ({
+      ...row,
+      hasQError: row.q == null || Number(row.q) <= 0,
+    }));
+    
+    const qErrorsCount = rowsWithErrors.filter(row => row.hasQError).length;
+
+    console.log('[[TasksTab Details Debug]] Загружено строк:', safeRows.length, {
+      weekStartDate: weekStartStr,
+      distinct_project_gids: distinctProjects,
+      distinct_assignee_gids: distinctAssignees,
+      qErrorsCount: qErrorsCount,
+      tasksDetailsOnlyQErrors: window.tasksDetailsFilterState?.showErrorsOnly || false
+    });
+
+    if (safeRows.length === 0) {
+      console.warn('[[TasksTab Details Debug]] Нет задач для недели', weekStartStr);
+    }
+
+    return rowsWithErrors;
   } catch (error) {
-    console.error('Ошибка в getAsanaTasksDetailsByWeekStart:', error);
+    console.error('[[TasksTab Details Error]] Ошибка в getAsanaTasksDetailsByWeekStart:', error);
     return [];
   }
 }
@@ -2246,11 +2358,14 @@ async function getAsanaTasksDetails() {
       return [];
     }
     
-    // Используем week_start_date из кешированной статистики, если она есть
-    let weekStartStr;
-    if (cachedTasksStats && cachedTasksStats.week_start_date) {
-      weekStartStr = cachedTasksStats.week_start_date;
-    } else {
+    // Используем lastAsanaWeekStart, если он есть, иначе fallback на кеш или текущую неделю
+    let weekStartStr = lastAsanaWeekStart;
+    
+    if (!weekStartStr && cachedTasksStats) {
+      weekStartStr = cachedTasksStats.weekStartDate || cachedTasksStats.week_start_date;
+    }
+    
+    if (!weekStartStr) {
       // Если кеша нет, рассчитываем начало недели
       const now = new Date();
       const day = now.getDay();
@@ -2278,6 +2393,10 @@ function formatDate(dateString) {
   
   return `${day}.${month}.${year}`;
 }
+
+const ASANA_PROJECT_LABELS = {
+  '1210258013776969': 'Timetrack',
+};
 
 // Функция для отображения детальных данных о задачах
 async function renderTasksDetails() {
@@ -2313,30 +2432,151 @@ function renderTasksDetailsFromCache() {
     return;
   }
   
-  // Создаем таблицу
-  let tableHTML = `
-    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+  // Функция для определения ошибки Q: q == null или q <= 0
+  function hasQError(task) {
+    if (typeof task.hasQError === 'boolean') {
+      return task.hasQError;
+    }
+    // Ошибка Q: q отсутствует или <= 0
+    return task.q == null || task.q <= 0;
+  }
+  
+  // Функция для форматирования источника товара
+  function formatProductSource(source) {
+    if (source === 'PRINESLI') return 'Принесли';
+    if (source === 'WAREHOUSE') return 'Взять со склада';
+    return source || '—';
+  }
+  
+  // Подсчёт ошибок Q в исходных данных (до фильтрации)
+  const qErrorsCount = cachedTasksDetails.filter(task => hasQError(task)).length;
+  
+  // Фильтр состояния: только флаг "показать только ошибки Q"
+  // Примечание: фильтр по проекту убран, так как Edge Function уже фильтрует по проекту "Arbuz Контент. Задачи"
+  window.tasksDetailsFilterState = window.tasksDetailsFilterState || { showErrorsOnly: false };
+  const filterState = window.tasksDetailsFilterState;
+
+  // Фильтрация строк: только по флагу "показать только ошибки Q"
+  const filteredRows = cachedTasksDetails.filter(task => {
+    if (filterState.showErrorsOnly) {
+      return hasQError(task);
+    }
+    return true;
+  });
+
+  console.debug('[[TasksTab Details Debug]] Фильтрация деталей', {
+    totalRows: cachedTasksDetails.length,
+    qErrorsCount: qErrorsCount,
+    filteredRows: filteredRows.length,
+    showErrorsOnly: filterState.showErrorsOnly
+  });
+
+  // Заголовок с информацией об ошибках Q
+  let headerHTML = '';
+  if (qErrorsCount > 0) {
+    headerHTML = `<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Всего задач с ошибкой Q: <strong style="color: #d32f2f;">${qErrorsCount}</strong></p>`;
+  }
+
+  // Контролы фильтрации (только чекбокс "Показать только ошибки Q")
+  let controlsHTML = `
+    <div class="tasks-filter-row">
+      <label class="tasks-filter-label">
+        <input type="checkbox" id="tasksFilterErrors" ${filterState.showErrorsOnly ? 'checked' : ''} />
+        Показать только задачи с ошибкой Q
+      </label>
+    </div>
+  `;
+
+  let tableHTML = headerHTML + controlsHTML + `
+    <table>
       <thead>
-        <tr style="background: var(--bg-muted); border-bottom: 2px solid var(--border-default);">
-          <th style="padding: 12px; text-align: left; font-weight: 600; color: var(--text-primary);">Задача</th>
-          <th style="padding: 12px; text-align: center; font-weight: 600; color: var(--text-primary);">Кол-во</th>
-          <th style="padding: 12px; text-align: center; font-weight: 600; color: var(--text-primary);">Дата</th>
+        <tr>
+          <th>Задача</th>
+          <th>Q</th>
+          <th>Товар</th>
+          <th>Статус</th>
+          <th>Сфоткал</th>
+          <th>Обработал</th>
+          <th>Дедлайн</th>
         </tr>
       </thead>
       <tbody>
   `;
   
-  cachedTasksDetails.forEach((task, index) => {
-    const rowStyle = index % 2 === 0 ? 'background: var(--bg-surface);' : 'background: var(--bg-muted);';
+  filteredRows.forEach((task, index) => {
     const taskName = task.task_name || 'Без названия';
-    const quantity = task.quantity || 0;
-    const date = formatDate(task.completed_at);
+    const q = task.q || 0;
+    const productSource = formatProductSource(task.product_source);
+    const dueOn = formatDate(task.due_on);
+    const shotAt = formatDate(task.shot_at);
+    const processedAt = formatDate(task.processed_at || task.completed_at);
+    const isCompleted = task.completed === true;
+    const hasErr = hasQError(task);
+    const qDisplay = hasErr ? '⚠ Q!' : q;
+    const statusText = isCompleted ? 'Сделано' : 'Не сделано';
+    const statusValueClass = isCompleted
+      ? 'task-field-value task-row-value task-row-value--status-done'
+      : 'task-field-value task-row-value task-row-value--status-pending';
+    
+    const rowClasses = ['task-row'];
+    if (index % 2 !== 0) {
+      rowClasses.push('task-row--alt');
+    }
+    if (hasErr) {
+      rowClasses.push('task-row--error');
+    }
+    rowClasses.push('task-card');
+    const rowClassName = rowClasses.join(' ');
     
     tableHTML += `
-      <tr style="${rowStyle} border-bottom: 1px solid var(--border-default);">
-        <td style="padding: 12px; color: var(--text-primary); word-break: break-word;">${taskName}</td>
-        <td style="padding: 12px; text-align: center; color: var(--text-primary); font-weight: 500;">${quantity}</td>
-        <td style="padding: 12px; text-align: center; color: var(--text-primary);">${date}</td>
+      <tr class="${rowClassName} ${hasErr ? 'q-error' : ''}">
+        <td class="task-row-cell task-row-cell--name" data-label="Задача">
+          <div class="task-field">
+            <span class="task-field-label">Задача</span>
+            <span class="task-field-value task-row-value">
+              ${taskName}${hasErr ? ' <span class="task-row-value task-row-value--error">⚠</span>' : ''}
+            </span>
+          </div>
+          <div class="task-row-meta meta-field">
+            project: ${task.project_gid || '—'} • assignee: ${task.assignee_gid || '—'}
+          </div>
+        </td>
+        <td class="task-row-cell" data-label="Q">
+          <div class="task-field">
+            <span class="task-field-label">Q</span>
+            <span class="task-field-value task-row-value ${hasErr ? 'task-row-value--error' : ''}">${qDisplay ?? '—'}</span>
+          </div>
+        </td>
+        <td class="task-row-cell" data-label="Товар">
+          <div class="task-field">
+            <span class="task-field-label">Товар</span>
+            <span class="task-field-value task-row-value">${productSource}</span>
+          </div>
+        </td>
+        <td class="task-row-cell" data-label="Статус">
+          <div class="task-field">
+            <span class="task-field-label">Статус</span>
+            <span class="${statusValueClass}">${statusText}</span>
+          </div>
+        </td>
+        <td class="task-row-cell" data-label="Сфоткал">
+          <div class="task-field">
+            <span class="task-field-label">Сфоткал</span>
+            <span class="task-field-value task-row-value">${shotAt || '—'}</span>
+          </div>
+        </td>
+        <td class="task-row-cell" data-label="Обработал">
+          <div class="task-field">
+            <span class="task-field-label">Обработал</span>
+            <span class="task-field-value task-row-value">${processedAt || '—'}</span>
+          </div>
+        </td>
+        <td class="task-row-cell" data-label="Дедлайн">
+          <div class="task-field">
+            <span class="task-field-label">Дедлайн</span>
+            <span class="task-field-value task-row-value">${dueOn || '—'}</span>
+          </div>
+        </td>
       </tr>
     `;
   });
@@ -2345,8 +2585,28 @@ function renderTasksDetailsFromCache() {
       </tbody>
     </table>
   `;
+
+  if (filteredRows.length === 0) {
+    tableHTML += '<p style="text-align: center; color: var(--text-muted); margin-top: 12px;">Нет задач, удовлетворяющих выбранным фильтрам.</p>';
+  }
   
   detailsList.innerHTML = tableHTML;
+
+  // Обработчик чекбокса "Показать только задачи с ошибкой Q"
+  const errorsCheckbox = document.getElementById('tasksFilterErrors');
+  if (errorsCheckbox) {
+    errorsCheckbox.addEventListener('change', (e) => {
+      window.tasksDetailsFilterState = {
+        ...window.tasksDetailsFilterState,
+        showErrorsOnly: e.target.checked
+      };
+      console.debug('[TasksTab Details Debug] apply only-Q-errors filter:', e.target.checked, 'rows before:', cachedTasksDetails.length);
+      renderTasksDetailsFromCache();
+    });
+  }
+  
+  // Примечание: фильтр по проекту убран, так как Edge Function уже фильтрует по проекту "Arbuz Контент. Задачи"
+  // Все задачи в таблице относятся к одному проекту, поэтому дополнительный выбор проекта не нужен
 }
 
 async function renderBoss(){

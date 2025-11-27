@@ -3,27 +3,65 @@
 ## Цель
 Добавить на сайт статистику работы фотографа по товарам на текущую неделю из Asana.
 
-## Показатели
-1. **Отснято на неделе** - сумма поля "Кол-во товаров" из завершенных задач за текущую неделю
-2. **Предстоит отснять** - сумма поля "Кол-во товаров" из незавершенных задач с дедлайном на текущую неделю
-3. **Запланировано товаров на неделю** - сумма показателей 1 и 2
-4. **До выполнения плана** - результат: 80 - (сумма показателей 1 и 2). План на неделю: 80 товаров. Если выполнено больше 80 - показывает перевыполнение (отрицательное значение)
+## Показатели (логика v3)
+1. **done_fact_this_week** — сумма `Q` задач, фактически сделанных в этой неделе. Неделя определяется по первой доступной дате из `processed_at`, `shot_at`, `completed_at` (все недели нормализуются к понедельнику). Учитываются только задачи с `Q > 0` и `completed = true`.
+2. **carry_over_from_prev** — объём переработки, который пришёл из прошлой недели (хранится в `asana_stats`). При отображении карточки «Сделано» добавляется к `done_fact_this_week`.
+3. **done_qty** — показывается на карточке «Сделано»: `done_fact_this_week + carry_over_from_prev`.
+4. **to_shoot_qty** — сумма `Q` незавершённых задач, чьё `due_on` попадает в текущую неделю (понедельник–воскресенье). Это плановый объём «предстоит».
+5. **week_load** — недельная нагрузка: `done_fact_this_week + to_shoot_qty`. Показывает совокупный объём недели (что уже сделано по факту + что ещё предстоит по сроку).
+6. **plan** — динамический план 80–100, вычисляется от `week_load` и сравнивается именно с `done_fact_this_week`.
+7. **remaining_to_plan** — `max(0, plan - done_fact_this_week)`. Если отрицательно, значит перевыполнение (используется для зелёной подсветки).
+8. **on_hand_qty** — суммарный `Q` задач с `product_source = 'PRINESLI'`, `completed != true`, `due_on` в текущей неделе.
+9. **warehouse_qty** — суммарный `Q` задач с `product_source = 'WAREHOUSE'`, `completed != true`, `shot_at IS NULL`, `processed_at IS NULL`, `due_on` в текущей неделе.
+10. **shot_not_processed_qty** — суммарный `Q` задач, где `shot_at` заполнено, `processed_at` пусто, задача не завершена. Неделя определяется по `week_shot`.
+11. **q_errors_count** — количество задач, где `Q <= 0` или `Q IS NULL`, но задача либо имеет `due_on` в текущей неделе, либо попадает в `week_shot` текущей недели (т.е. должна участвовать в планах/факте).
+12. **overtime_qty** — `max(0, done_fact_this_week - plan)`; переносится в `carry_over_from_prev` следующей недели.
 
 ## Данные Asana API
 
 ### Основные параметры
 - **Base URL**: `https://app.asana.com/api/1.0/`
-- **User ID**: `1210252517070407` (Stanislav Khreshchik)
-- **Project ID**: `1210258013776969` (Arbuz Контент. Задачи)
-- **Custom Field ID**: `1210420107320602` (поле "Кол-во товаров", тип: CustomPropertyNumberProto)
+- **Workspace GID**: `1208507351529750` (Arbuz workspace)
+- **Project GID**: `1210258013776969` (Arbuz Контент. Задачи)
+- **Assignee Scope**: `me` (задачи текущего пользователя, владельца Personal Access Token)
+- **User ID**: `1210252517070407` (Stanislav Khreshchik) — используется для защитной фильтрации перед записью в `asana_tasks`
+- **Custom Field (Q)**: числовое поле "Q" — основной источник количества товаров (точный GID можно посмотреть в проекте Asana; legacy поле "Кол-во товаров" больше не используется)
 
 ### Endpoint для получения задач
+
+Edge Function использует endpoint `/tasks` с фильтрацией по workspace, project и assignee:
+
 ```
-GET https://app.asana.com/api/1.0/tasks?project=1210258013776969&assignee=1210252517070407
+GET https://app.asana.com/api/1.0/tasks?workspace=1208507351529750&project=1210258013776969&assignee=me&limit=100&opt_fields=gid,name,completed,completed_at,due_on,assignee,created_at,modified_at,custom_fields
 ```
 
 ### Параметры запроса
-- `opt_fields`: `gid,name,completed,completed_at,due_on,custom_fields`
+- `workspace`: `1208507351529750` — фильтр по рабочему пространству Arbuz
+- `project`: `1210258013776969` — фильтр по проекту "Arbuz Контент. Задачи"
+- `assignee`: `me` — фильтр по задачам текущего пользователя (владельца PAT)
+- `limit`: `100` — максимальное количество задач на страницу (при необходимости используется пагинация)
+- `opt_fields`: `gid,name,completed,completed_at,due_on,assignee,created_at,modified_at,custom_fields` — поля, которые нужно получить из Asana
+
+### Фильтрация по исполнителю перед записью
+
+Перед записью задач в таблицу `asana_tasks` Edge Function применяет дополнительную защитную фильтрацию:
+
+1. **Проверка наличия assignee**: задачи без исполнителя (`task.assignee?.gid` отсутствует) не записываются в `asana_tasks` и логируются как пропущенные.
+
+2. **Проверка соответствия assignee_gid**: если переменная окружения `TIMETRACK_ASSIGNEE_GID` установлена, задачи, где `task.assignee.gid !== TIMETRACK_ASSIGNEE_GID`, отбрасываются с debug-логом (task_gid, task_name, assignee_gid, expected_assignee_gid).
+
+3. **Логирование**: Edge Function логирует количество задач до и после фильтрации:
+   - `[FetchAsanaStats] Total tasks from Asana (raw): N` — количество задач, полученных из Asana API
+   - `[FetchAsanaStats] Tasks after assignee filter: M` — количество задач после фильтрации
+
+4. **Безопасность**: если `TIMETRACK_ASSIGNEE_GID` не установлена, выводится предупреждение, что защитный фильтр выключен, и все задачи из Asana API записываются в `asana_tasks` без дополнительной проверки.
+
+**Важно:** Все KPI и статистика рассчитываются только по задачам, прошедшим фильтрацию и записанным в `asana_tasks`. Это гарантирует, что в систему попадают только задачи текущего пользователя из проекта "Arbuz Контент. Задачи".
+
+**Настройка переменной окружения:**
+```bash
+supabase secrets set TIMETRACK_ASSIGNEE_GID=1210252517070407
+```
 
 ## Шаг 1: Получение Personal Access Token в Asana
 
@@ -46,10 +84,20 @@ CREATE TABLE asana_stats (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   week_start_date DATE NOT NULL, -- Дата начала недели (понедельник)
   week_end_date DATE NOT NULL,    -- Дата окончания недели (воскресенье)
-  completed_count INTEGER DEFAULT 0,      -- Отснято на неделе
-  pending_count INTEGER DEFAULT 0,        -- Предстоит отснять
-  total_plan INTEGER DEFAULT 0,           -- Запланировано товаров на неделю (сумма показателей 1 и 2)
-  remaining_to_plan INTEGER DEFAULT 0,    -- До выполнения плана (80 - total_plan)
+  -- Legacy поля (сохраняются для обратной совместимости)
+  completed_count INTEGER DEFAULT 0,      -- Legacy: отснято на неделе (используйте done_qty)
+  pending_count INTEGER DEFAULT 0,        -- Legacy: предстоит отснять (используйте to_shoot_qty)
+  total_plan INTEGER DEFAULT 0,           -- Legacy: запланировано товаров (используйте week_load)
+  remaining_to_plan INTEGER DEFAULT 0,    -- Остаток до выполнения плана: plan - done_qty
+  -- Новые поля для расширенной статистики (комбинация due_on + фактические даты)
+  week_load INTEGER DEFAULT 0,            -- Недельная нагрузка: done_fact_this_week + to_shoot_qty
+  plan INTEGER DEFAULT 80,                -- Динамический план недели (80-100), сравнивается с done_fact_this_week
+  done_qty INTEGER DEFAULT 0,             -- KPI "Сделано": done_fact_this_week + carry_over_from_prev
+  to_shoot_qty INTEGER DEFAULT 0,         -- Сумма Q незавершённых задач с due_on в текущей неделе
+  on_hand_qty INTEGER DEFAULT 0,          -- Сумма Q задач недели (due_on), где product_source = 'PRINESLI' и completed != true
+  warehouse_qty INTEGER DEFAULT 0,        -- Сумма Q задач недели (due_on), где product_source = 'WAREHOUSE', shot_at IS NULL, processed_at IS NULL
+  shot_not_processed_qty INTEGER DEFAULT 0, -- Сумма Q задач недели по week_shot, где shot_at есть, processed_at нет
+  q_errors_count INTEGER DEFAULT 0,        -- Количество задач недели, у которых Q отсутствует/<=0, но они попадают в план или факт
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(week_start_date) -- Одна запись на неделю
@@ -67,6 +115,10 @@ CREATE POLICY "Anyone can read asana_stats"
   USING (true);
 ```
 
+**Примечание:** 
+- Для обновления существующей таблицы `asana_stats` используйте скрипт `supabase/sql/patch-asana-stats-schema.sql` (рекомендуется) или `migrate_asana_stats_schema.sql` в корне проекта.
+- См. раздел "Синхронизация схемы Supabase" в `docs/tasks-tab-overview.md` для подробных инструкций.
+
 ### 2.2. Таблица для детальной информации о задачах (asana_tasks)
 
 Создайте таблицу для хранения детальной информации о каждой задаче с количеством товаров:
@@ -79,10 +131,18 @@ CREATE TABLE asana_tasks (
   task_name TEXT, -- Название задачи
   completed BOOLEAN DEFAULT false, -- Завершена ли задача
   completed_at TIMESTAMP WITH TIME ZONE, -- Дата завершения
-  due_on DATE, -- Дедлайн задачи
-  quantity INTEGER, -- Количество товаров (из поля "Кол-во товаров", Custom Field ID: 1210420107320602)
+  due_on DATE, -- Дедлайн задачи (используется для плановых KPI недели)
+  -- Legacy поле (сохраняется для обратной совместимости)
+  quantity INTEGER, -- Legacy: старое поле "Кол-во товаров"
+  -- Новые поля для новой бизнес-логики
+  q INTEGER, -- Количество товаров из поля Q (основной источник)
+  product_source TEXT, -- Источник товара: 'PRINESLI' (Принесли) или 'WAREHOUSE' (Взять самому со склада)
+  shot_at DATE, -- Дата из поля "когда сфоткал"
+  processed_at DATE, -- Дата из поля "когда обработал" или completed_at, если поле пустое при completed = true
+  week_shot DATE, -- Понедельник недели, к которой относится shot_at (используется для расчёта KPI)
+  week_processed DATE, -- Понедельник недели, к которой относится processed_at (используется для расчёта KPI)
   assignee_gid TEXT, -- GID исполнителя (User ID: 1210252517070407)
-  week_start_date DATE NOT NULL, -- Дата начала недели (понедельник) для группировки
+  week_start_date DATE NOT NULL, -- Дата начала недели (понедельник) по due_on. Ключ недели для плановых KPI и выборок UI
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -92,6 +152,12 @@ CREATE INDEX idx_asana_tasks_asana_gid ON asana_tasks(asana_task_gid);
 CREATE INDEX idx_asana_tasks_week_start ON asana_tasks(week_start_date);
 CREATE INDEX idx_asana_tasks_completed ON asana_tasks(completed);
 CREATE INDEX idx_asana_tasks_due_on ON asana_tasks(due_on);
+CREATE INDEX idx_asana_tasks_q ON asana_tasks(q) WHERE q IS NOT NULL;
+CREATE INDEX idx_asana_tasks_product_source ON asana_tasks(product_source) WHERE product_source IS NOT NULL;
+CREATE INDEX idx_asana_tasks_shot_at ON asana_tasks(shot_at) WHERE shot_at IS NOT NULL;
+CREATE INDEX idx_asana_tasks_processed_at ON asana_tasks(processed_at) WHERE processed_at IS NOT NULL;
+CREATE INDEX idx_asana_tasks_week_shot ON asana_tasks(week_shot) WHERE week_shot IS NOT NULL;
+CREATE INDEX idx_asana_tasks_week_processed ON asana_tasks(week_processed) WHERE week_processed IS NOT NULL;
 
 -- RLS политики
 ALTER TABLE asana_tasks ENABLE ROW LEVEL SECURITY;
@@ -102,7 +168,11 @@ CREATE POLICY "Anyone can read asana_tasks"
   USING (true);
 ```
 
-**Примечание:** SQL скрипт для создания таблицы `asana_tasks` находится в файле `create_asana_tasks_table.sql` в корне проекта.
+**Примечания:**
+- SQL скрипт для создания таблицы `asana_tasks` находится в файле `create_asana_tasks_table.sql` в корне проекта.
+- Для обновления существующей таблицы `asana_tasks` используйте скрипт `supabase/sql/patch-asana-tasks-schema.sql` (рекомендуется) или `migrate_asana_tasks_schema.sql` в корне проекта.
+- Поле `q` является основным источником количества товаров. Поле `quantity` сохраняется только как legacy для обратной совместимости.
+- См. раздел "Синхронизация схемы Supabase" в `docs/tasks-tab-overview.md` для подробных инструкций по применению патчей.
 
 ## Шаг 3: Создание Supabase Edge Function
 
@@ -133,166 +203,51 @@ supabase functions new fetch-asana-stats
 
 Создайте файл `supabase/functions/fetch-asana-stats/index.ts`:
 
-```typescript
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+**Важно:** Полный код Edge Function находится в файле `supabase/functions/fetch-asana-stats/index.ts` в корне проекта. Ниже приведено краткое описание логики.
 
-const ASANA_API_BASE = "https://app.asana.com/api/1.0"
-const ASANA_PAT = Deno.env.get('ASANA_PAT') // Personal Access Token
-const PROJECT_ID = "1210258013776969"
-const USER_ID = "1210252517070407"
-const CUSTOM_FIELD_ID = "1210420107320602"
+**Основные особенности логики v3:**
 
-// Функция для получения начала и конца текущей недели (понедельник - воскресенье)
-function getCurrentWeek() {
-  const now = new Date()
-  const day = now.getDay()
-  const diff = now.getDate() - day + (day === 0 ? -6 : 1) // Понедельник
-  const monday = new Date(now.setDate(diff))
-  monday.setHours(0, 0, 0, 0)
-  
-  const sunday = new Date(monday)
-  sunday.setDate(monday.getDate() + 6)
-  sunday.setHours(23, 59, 59, 999)
-  
-  return { start: monday, end: sunday }
-}
+1. **Получение задач из Asana API.**
+   - Edge Function запрашивает задачи через endpoint `/tasks` с параметрами: `workspace=ARBUZ_WORKSPACE_GID`, `project=ARBUZ_CONTENT_PROJECT_GID`, `assignee=me`.
+   - Это гарантирует, что из Asana приходят только задачи текущего пользователя из проекта "Arbuz Контент. Задачи".
 
-// Функция для проверки, попадает ли дата в текущую неделю
-function isInCurrentWeek(date: Date, weekStart: Date, weekEnd: Date) {
-  return date >= weekStart && date <= weekEnd
-}
+2. **Защитная фильтрация по исполнителю перед записью.**
+   - Перед записью в `asana_tasks` применяется дополнительная проверка: задачи без `assignee` и задачи, где `task.assignee.gid !== TIMETRACK_ASSIGNEE_GID` (если переменная окружения установлена), отбрасываются.
+   - Логируется количество задач до и после фильтрации для диагностики.
+   - Если `TIMETRACK_ASSIGNEE_GID` не установлена, выводится предупреждение, что защитный фильтр выключен.
 
-serve(async (req) => {
-  try {
-    // Получаем текущую неделю
-    const { start: weekStart, end: weekEnd } = getCurrentWeek()
-    
-    // Получаем задачи из Asana
-    const response = await fetch(
-      `${ASANA_API_BASE}/tasks?project=${PROJECT_ID}&assignee=${USER_ID}&opt_fields=gid,name,completed,completed_at,due_on,custom_fields`,
-      {
-        headers: {
-          'Authorization': `Bearer ${ASANA_PAT}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    )
-    
-    if (!response.ok) {
-      throw new Error(`Asana API error: ${response.status} ${response.statusText}`)
-    }
-    
-    const data = await response.json()
-    const tasks = data.data || []
-    
-    // Инициализация счетчиков
-    let completedCount = 0  // Отснято на неделе
-    let pendingCount = 0     // Предстоит отснять
-    
-    // Обработка задач
-    for (const task of tasks) {
-      // Находим поле "Кол-во товаров"
-      const quantityField = task.custom_fields?.find(
-        (field: any) => field.gid === CUSTOM_FIELD_ID
-      )
-      
-      if (!quantityField || !quantityField.number_value) {
-        continue // Пропускаем задачи без количества товаров
-      }
-      
-      const quantity = quantityField.number_value
-      
-      // Проверяем завершенные задачи
-      if (task.completed && task.completed_at) {
-        const completedDate = new Date(task.completed_at)
-        if (isInCurrentWeek(completedDate, weekStart, weekEnd)) {
-          completedCount += quantity
-        }
-      }
-      
-      // Проверяем предстоящие задачи
-      if (!task.completed && task.due_on) {
-        const dueDate = new Date(task.due_on)
-        if (isInCurrentWeek(dueDate, weekStart, weekEnd)) {
-          pendingCount += quantity
-        }
-      }
-    }
-    
-    // Расчет показателей
-    const totalPlan = completedCount + pendingCount // Запланировано товаров на неделю
-    const remainingToPlan = 80 - totalPlan // До выполнения плана (80 товаров). Может быть отрицательным при перевыполнении
-    
-    // Подключение к Supabase
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const supabase = createClient(supabaseUrl, supabaseKey)
-    
-    // Форматирование дат для Supabase
-    const weekStartStr = weekStart.toISOString().split('T')[0]
-    const weekEndStr = weekEnd.toISOString().split('T')[0]
-    
-    // Сохранение или обновление данных в Supabase
-    const { data: existingData, error: selectError } = await supabase
-      .from('asana_stats')
-      .select('id')
-      .eq('week_start_date', weekStartStr)
-      .single()
-    
-    const statsData = {
-      week_start_date: weekStartStr,
-      week_end_date: weekEndStr,
-      completed_count: completedCount,
-      pending_count: pendingCount,
-      total_plan: totalPlan,
-      remaining_to_plan: remainingToPlan,
-      updated_at: new Date().toISOString()
-    }
-    
-    if (existingData) {
-      // Обновляем существующую запись
-      const { error } = await supabase
-        .from('asana_stats')
-        .update(statsData)
-        .eq('id', existingData.id)
-      
-      if (error) throw error
-    } else {
-      // Создаем новую запись
-      const { error } = await supabase
-        .from('asana_stats')
-        .insert(statsData)
-      
-      if (error) throw error
-    }
-    
-    return new Response(
-      JSON.stringify({
-        success: true,
-        data: statsData,
-        message: 'Statistics updated successfully'
-      }),
-      {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200
-      }
-    )
-    
-  } catch (error) {
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: error.message
-      }),
-      {
-        headers: { 'Content-Type': 'application/json' },
-        status: 500
-      }
-    )
-  }
-})
-```
+3. **Q как единственный источник количества.** Edge Function извлекает кастомное поле Q (число). Legacy поле "Кол-во товаров" больше не используется в расчётах.
+
+4. **Кастомные поля Asana:**
+   - **Q** — числовое поле (количество товаров).
+   - **"Товар"** — enum: "Принесли" (`PRINESLI`) или "Взять самому со склада" (`WAREHOUSE`).
+   - **"когда сфотал"** — дата съёмки (`shot_at`).
+   - **"когда обработал"** — дата обработки (`processed_at`). Если пусто, но `completed = true`, используется `completed_at`.
+
+3. **Фактический зачёт «Сделано».**
+   - Задача попадает в `done_fact_this_week`, если `Q > 0`, `completed = true`, и неделя одного из полей (`processed_at` → `shot_at` → `completed_at`) совпадает с текущей.
+   - `done_qty = done_fact_this_week + carry_over_from_prev`.
+   - `overtime_qty = max(0, done_fact_this_week - plan)` переносится в следующую неделю.
+
+4. **Плановые показатели по `due_on`.**
+   - `to_shoot_qty`, `on_hand_qty`, `warehouse_qty` используют неделю `week_start_date` (понедельник по `due_on`).
+   - `to_shoot_qty` включает все незавершённые задачи недели по дедлайну.
+   - `on_hand_qty` ограничено задачами `PRINESLI`, `warehouse_qty` — задачами `WAREHOUSE` без начала работы (`shot_at` и `processed_at` пусты).
+
+5. **Недельная нагрузка и план.**
+   - `week_load = done_fact_this_week + to_shoot_qty`.
+   - План фиксируется в диапазоне 80–100 по прежним правилам, но сравнивается именно с фактическим `done_fact_this_week`.
+   - `remaining_to_plan = max(0, plan - done_fact_this_week)`.
+
+6. **Вторичные показатели.**
+   - `shot_not_processed_qty` опирается на `week_shot`.
+   - `q_errors_count` учитывает задачи недели (по `due_on` или `week_shot`), где `Q` отсутствует или <= 0.
+
+7. **Запись в `asana_tasks`.**
+   - Сохраняются `q`, `product_source`, `shot_at`, `processed_at`, `week_shot`, `week_processed`, а также обязательные `due_on` и `week_start_date` для плановых KPI.
+   - Legacy поле `quantity` остаётся только для обратной совместимости UI/SQL.
+
+**Полный код:** См. файл `supabase/functions/fetch-asana-stats/index.ts` в корне проекта.
 
 ### 3.5. Развертывание Edge Function
 
@@ -308,7 +263,7 @@ supabase functions deploy fetch-asana-stats
 
 **Требования к обновлению данных:**
 - Обновление при создании новой задачи на вас в Asana
-- Обновление при заполнении поля "Кол-во товаров" в задаче
+- Обновление при заполнении поля Q в задаче
 - Обновление при изменении количества товаров в существующей задаче
 - Кнопка на сайте для принудительного обновления данных (уже реализована)
 
@@ -678,4 +633,14 @@ async function renderTasks() {
 2. Добавить индикатор последнего обновления
 3. Добавить график прогресса за неделю
 4. Добавить уведомления при достижении плана
+
+## Изменения логики
+
+**Версия v3 – due_on + фактические даты, с переработкой (2025 Q4):**
+
+- Плановые KPI (`to_shoot_qty`, `on_hand_qty`, `warehouse_qty`) рассчитываются по неделям `due_on`.
+- Фактические KPI (`done_fact_this_week`, `done_qty`, `shot_not_processed_qty`) строятся по `shot_at/processed_at/completed_at`.
+- `week_load = done_fact_this_week + to_shoot_qty`, план (80–100) сравнивается только с `done_fact_this_week`.
+- Введены понятия `overtime_qty` и `carry_over_from_prev`, чтобы фиксировать переработку между неделями.
+- Поле `due_on` теперь официально участвует в расчётах плановых KPI, тогда как фактические показатели всегда следуют реальным датам работы.
 
