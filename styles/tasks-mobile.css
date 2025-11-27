@@ -365,9 +365,8 @@
 
   #tasksDetailsContainer {
     margin-top: 12px;
-    padding: 8px 0;
-    padding-left: 0;
-    padding-right: 0;
+    padding: 0;
+    width: 100%;
   }
 
   #tasksDetailsList thead {
@@ -387,6 +386,13 @@
   #tasksDetailsList tbody {
     display: block;
     width: 100%;
+  }
+
+  .tasks-details-panel {
+    padding: 12px;
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .task-row {
@@ -417,7 +423,7 @@
   .task-card {
     border: 1px solid #e3e3e3;
     border-radius: 10px;
-    margin: 0 8px 10px 8px;
+    margin: 0 0 10px 0;
     padding: 10px 12px;
     background: #fff;
     box-sizing: border-box;
