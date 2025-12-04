@@ -11,7 +11,7 @@
 5. **week_load** — недельная нагрузка: `done_fact_this_week + to_shoot_qty`. Показывает совокупный объём недели (что уже сделано по факту + что ещё предстоит по сроку).
 6. **plan** — динамический план 80–100, вычисляется от `week_load` и сравнивается именно с `done_fact_this_week`.
 7. **remaining_to_plan** — `max(0, plan - done_fact_this_week)`. Если отрицательно, значит перевыполнение (используется для зелёной подсветки).
-8. **on_hand_qty** — суммарный `Q` задач с `product_source = 'PRINESLI'`, `completed != true`, `due_on` в текущей неделе.
+8. **on_hand_qty** — суммарный `Q` задач с `product_source = 'PRINESLI'`, `completed != true`, `due_on` в текущей неделе, `shot_at IS NULL` (товар ещё не сфотографирован, поэтому физически находится на руках).
 9. **warehouse_qty** — суммарный `Q` задач с `product_source = 'WAREHOUSE'`, `completed != true`, `shot_at IS NULL`, `processed_at IS NULL`, `due_on` в текущей неделе.
 10. **shot_not_processed_qty** — суммарный `Q` задач, где `shot_at` заполнено, `processed_at` пусто, задача не завершена. Неделя определяется по `week_shot`.
 11. **q_errors_count** — количество задач, где `Q <= 0` или `Q IS NULL`, но задача либо имеет `due_on` в текущей неделе, либо попадает в `week_shot` текущей недели (т.е. должна участвовать в планах/факте).
@@ -226,13 +226,14 @@ supabase functions new fetch-asana-stats
 
 3. **Фактический зачёт «Сделано».**
    - Задача попадает в `done_fact_this_week`, если `Q > 0`, `completed = true`, и неделя одного из полей (`processed_at` → `shot_at` → `completed_at`) совпадает с текущей.
+   - **Важно:** Если поле "когда обработал" не заполнено (`processed_at IS NULL`), но задача завершена (`completed = true`), используется `completed_at` как дата обработки. Завершённая задача всегда попадает в "Сделано", даже если дата обработки не проставлена вручную.
    - `done_qty = done_fact_this_week + carry_over_from_prev`.
    - `overtime_qty = max(0, done_fact_this_week - plan)` переносится в следующую неделю.
 
 4. **Плановые показатели по `due_on`.**
    - `to_shoot_qty`, `on_hand_qty`, `warehouse_qty` используют неделю `week_start_date` (понедельник по `due_on`).
    - `to_shoot_qty` включает все незавершённые задачи недели по дедлайну.
-   - `on_hand_qty` ограничено задачами `PRINESLI`, `warehouse_qty` — задачами `WAREHOUSE` без начала работы (`shot_at` и `processed_at` пусты).
+   - `on_hand_qty` ограничено задачами `PRINESLI` без начала работы (`shot_at IS NULL`), так как если товар сфотографирован, он возвращён и больше не на руках. `warehouse_qty` — задачами `WAREHOUSE` без начала работы (`shot_at` и `processed_at` пусты).
 
 5. **Недельная нагрузка и план.**
    - `week_load = done_fact_this_week + to_shoot_qty`.

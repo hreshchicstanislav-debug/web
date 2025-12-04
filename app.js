@@ -3430,3 +3430,255 @@ if ('serviceWorker' in navigator) {
       });
   });
 }
+
+// Функция для проверки, попадает ли задача в факт выполненных задач текущей недели
+// Использование: checkTaskInFactThisWeek('слойка_круассан_макароны_4_СТМ')
+async function checkTaskInFactThisWeek(taskNamePattern) {
+  try {
+    if (!supabaseClient) {
+      console.error('Supabase клиент не инициализирован');
+      return null;
+    }
+
+    // Получаем текущую неделю (понедельник)
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0 = воскресенье, 1 = понедельник, ...
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - daysToMonday);
+    const currentWeekStart = monday.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    console.log('🔍 Проверка задачи:', taskNamePattern);
+    console.log('📅 Текущая неделя начинается:', currentWeekStart);
+
+    // Ищем задачу
+    const { data: tasks, error } = await supabaseClient
+      .from('asana_tasks')
+      .select('task_name, q, completed, completed_at, shot_at, processed_at, week_shot, week_processed, week_start_date, due_on')
+      .ilike('task_name', `%${taskNamePattern}%`)
+      .order('updated_at', { ascending: false })
+      .limit(5);
+
+    if (error) {
+      console.error('Ошибка при запросе:', error);
+      return null;
+    }
+
+    if (!tasks || tasks.length === 0) {
+      console.log('❌ Задача не найдена в базе данных');
+      return null;
+    }
+
+    console.log(`✅ Найдено задач: ${tasks.length}`);
+
+    // Проверяем каждую найденную задачу
+    for (const task of tasks) {
+      console.log('\n📋 Задача:', task.task_name);
+      console.log('  Q:', task.q);
+      console.log('  Завершена:', task.completed);
+      console.log('  Дата обработки (processed_at):', task.processed_at);
+      console.log('  Неделя обработки (week_processed):', task.week_processed);
+      console.log('  Дата съемки (shot_at):', task.shot_at);
+      console.log('  Неделя съемки (week_shot):', task.week_shot);
+      console.log('  Дата завершения (completed_at):', task.completed_at);
+
+      // Определяем фактическую неделю по приоритету
+      let factWeek = null;
+      let factWeekSource = '';
+
+      if (task.week_processed) {
+        factWeek = task.week_processed;
+        factWeekSource = 'week_processed (дата обработки)';
+      } else if (task.week_shot) {
+        factWeek = task.week_shot;
+        factWeekSource = 'week_shot (дата съемки)';
+      } else if (task.completed && task.completed_at) {
+        // Вычисляем неделю по completed_at
+        const completedDate = new Date(task.completed_at);
+        const completedDayOfWeek = completedDate.getDay();
+        const completedDaysToMonday = completedDayOfWeek === 0 ? 6 : completedDayOfWeek - 1;
+        const completedMonday = new Date(completedDate);
+        completedMonday.setDate(completedDate.getDate() - completedDaysToMonday);
+        factWeek = completedMonday.toISOString().slice(0, 10);
+        factWeekSource = 'completed_at (дата завершения)';
+      }
+
+      console.log('  📍 Фактическая неделя:', factWeek, `(${factWeekSource})`);
+
+      // Проверяем условия для попадания в done_fact_this_week
+      const conditions = {
+        qGreaterThanZero: task.q > 0,
+        completed: task.completed === true,
+        factWeekMatchesCurrent: factWeek === currentWeekStart
+      };
+
+      console.log('  ✅ Условия:');
+      console.log('    - Q > 0:', conditions.qGreaterThanZero ? '✅' : '❌');
+      console.log('    - Завершена:', conditions.completed ? '✅' : '❌');
+      console.log('    - Неделя совпадает с текущей:', conditions.factWeekMatchesCurrent ? '✅' : '❌');
+
+      const inFactThisWeek = conditions.qGreaterThanZero && conditions.completed && conditions.factWeekMatchesCurrent;
+
+      if (inFactThisWeek) {
+        console.log('  🎯 РЕЗУЛЬТАТ: ✅ ЗАДАЧА ПОПАДАЕТ В ФАКТ ВЫПОЛНЕННЫХ ЗАДАЧ ЭТОЙ НЕДЕЛИ');
+      } else {
+        console.log('  🎯 РЕЗУЛЬТАТ: ❌ Задача НЕ попадает в факт выполненных задач этой недели');
+        if (!conditions.qGreaterThanZero) {
+          console.log('     Причина: Q <= 0 или отсутствует');
+        }
+        if (!conditions.completed) {
+          console.log('     Причина: Задача не завершена');
+        }
+        if (!conditions.factWeekMatchesCurrent) {
+          console.log(`     Причина: Фактическая неделя (${factWeek}) не совпадает с текущей (${currentWeekStart})`);
+        }
+      }
+
+      return {
+        task: task,
+        factWeek: factWeek,
+        factWeekSource: factWeekSource,
+        currentWeekStart: currentWeekStart,
+        conditions: conditions,
+        inFactThisWeek: inFactThisWeek
+      };
+    }
+
+    return tasks[0];
+  } catch (error) {
+    console.error('Ошибка при проверке задачи:', error);
+    return null;
+  }
+}
+
+// Делаем функцию доступной глобально для вызова из консоли
+window.checkTaskInFactThisWeek = checkTaskInFactThisWeek;
+
+// Функция для обновления срока выполнения (due_on) задачи в Supabase
+// Использование: 
+//   await updateTaskDueDate('Средний_Шоколадки_8_НЕ СТМ', '2025-11-21')
+//   await updateTaskDueDate(['Средний_Шоколадки_8_НЕ СТМ', 'Средний_Оливковое масло_7_НЕ СТМ', 'Средний_семечки и курт_13_НЕ СТМ', 'Средний_трюфельные соусы_9_НЕ СТМ'], '2025-11-21')
+// ВАЖНО: Это временное изменение. При следующей синхронизации из Asana значение может перезаписаться.
+// Рекомендуется также изменить due_on в самой Asana.
+async function updateTaskDueDate(taskNamePattern, newDueDate) {
+  // Поддерживаем как один паттерн, так и массив паттернов
+  const patterns = Array.isArray(taskNamePattern) ? taskNamePattern : [taskNamePattern];
+  try {
+    if (!supabaseClient) {
+      console.error('Supabase клиент не инициализирован');
+      return null;
+    }
+
+    if (!newDueDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDueDate)) {
+      console.error('Неверный формат даты. Используйте формат YYYY-MM-DD (например: 2025-11-21)');
+      return null;
+    }
+
+    console.log('🔍 Поиск задач:', patterns.length === 1 ? patterns[0] : patterns);
+    console.log('📅 Новая дата due_on:', newDueDate);
+
+    // Вычисляем week_start_date (понедельник недели, в которую попадает новая дата)
+    const dueDate = new Date(newDueDate + 'T00:00:00');
+    const dayOfWeek = dueDate.getDay(); // 0 = воскресенье, 1 = понедельник, ...
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const monday = new Date(dueDate);
+    monday.setDate(dueDate.getDate() - daysToMonday);
+    const weekStartDate = monday.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    console.log('📅 Новая week_start_date:', weekStartDate);
+
+    // Строим условие для поиска (поддержка нескольких паттернов)
+    // Для Supabase .or() нужно использовать правильный формат
+    let query = supabaseClient
+      .from('asana_tasks')
+      .select('task_name, asana_task_gid, due_on, week_start_date');
+    
+    // Если несколько паттернов, используем .or(), иначе .ilike()
+    if (patterns.length > 1) {
+      const orConditions = patterns.map(p => `task_name.ilike.%${p}%`).join(',');
+      query = query.or(orConditions);
+    } else {
+      query = query.ilike('task_name', `%${patterns[0]}%`);
+    }
+    
+    query = query.order('updated_at', { ascending: false }).limit(10);
+    
+    // Сначала находим задачи
+    const { data: tasks, error: findError } = await query;
+
+    if (findError) {
+      console.error('Ошибка при поиске задачи:', findError);
+      return null;
+    }
+
+    if (!tasks || tasks.length === 0) {
+      console.log('❌ Задача не найдена в базе данных');
+      return null;
+    }
+
+    console.log(`✅ Найдено задач: ${tasks.length}`);
+    tasks.forEach((task, index) => {
+      console.log(`  ${index + 1}. ${task.task_name} (GID: ${task.asana_task_gid})`);
+      console.log(`     Текущий due_on: ${task.due_on}, week_start_date: ${task.week_start_date}`);
+    });
+
+    // Обновляем все найденные задачи по их GID (более надежно, чем по имени)
+    const taskGids = tasks.map(t => t.asana_task_gid);
+    
+    let updateQuery = supabaseClient
+      .from('asana_tasks')
+      .update({
+        due_on: newDueDate,
+        week_start_date: weekStartDate,
+        updated_at: new Date().toISOString()
+      })
+      .in('asana_task_gid', taskGids)
+      .select('task_name, asana_task_gid, due_on, week_start_date, updated_at');
+    
+    const { data: updatedTasks, error: updateError } = await updateQuery;
+
+    if (updateError) {
+      console.error('Ошибка при обновлении:', updateError);
+      return null;
+    }
+
+    console.log(`\n✅ Обновлено задач: ${updatedTasks.length}`);
+    updatedTasks.forEach((task, index) => {
+      console.log(`  ${index + 1}. ${task.task_name}`);
+      console.log(`     Новый due_on: ${task.due_on}`);
+      console.log(`     Новый week_start_date: ${task.week_start_date}`);
+    });
+
+    // Проверяем, попадает ли задача в текущую неделю
+    const today = new Date();
+    const todayDayOfWeek = today.getDay();
+    const todayDaysToMonday = todayDayOfWeek === 0 ? 6 : todayDayOfWeek - 1;
+    const currentMonday = new Date(today);
+    currentMonday.setDate(today.getDate() - todayDaysToMonday);
+    const currentWeekStart = currentMonday.toISOString().slice(0, 10);
+
+    const inCurrentWeek = weekStartDate === currentWeekStart;
+    console.log(`\n📊 Статус:`);
+    console.log(`  Текущая неделя начинается: ${currentWeekStart}`);
+    console.log(`  Неделя задачи начинается: ${weekStartDate}`);
+    console.log(`  Попадает в текущую неделю: ${inCurrentWeek ? '❌ ДА' : '✅ НЕТ'}`);
+
+    if (inCurrentWeek) {
+      console.warn('⚠️ ВНИМАНИЕ: Задача всё ещё попадает в текущую неделю!');
+    } else {
+      console.log('✅ Задача успешно исключена из текущей недели');
+    }
+
+    console.warn('\n⚠️ ВАЖНО: Это временное изменение в Supabase.');
+    console.warn('При следующей синхронизации из Asana (каждые 5 минут или через webhook)');
+    console.warn('значение может перезаписаться, если due_on не изменено в самой Asana.');
+
+    return updatedTasks;
+  } catch (error) {
+    console.error('Ошибка при обновлении задачи:', error);
+    return null;
+  }
+}
+
+// Делаем функцию доступной глобально для вызова из консоли
+window.updateTaskDueDate = updateTaskDueDate;
