@@ -31,19 +31,30 @@
 
 Найти строку ~487, где считается `on_hand_qty`:
 
-**Было:**
+**Было (текущий код - НЕПРАВИЛЬНО):**
 ```typescript
 if (!task.completed && task.product_source === PRODUCT_SOURCE_PRINESLI) {
   onHandQty += q;
 }
 ```
 
-**Должно быть:**
+**Должно быть (правильный код):**
 ```typescript
 if (!task.completed && task.product_source === PRODUCT_SOURCE_PRINESLI && !task.shot_at) {
   onHandQty += q;
 }
 ```
+
+**Изменение:** Добавлено условие `&& !task.shot_at` - товар попадает в "Уже на руках" только если он ЕЩЁ НЕ сфотографирован.
+
+### Инструкция по исправлению:
+
+1. Откройте файл: `/Users/stanislav/supabase/functions/fetch-asana-stats/index.ts`
+2. Найдите строку с `on_hand_qty` (примерно строка 487)
+3. Добавьте `&& !task.shot_at` в условие
+4. Сохраните файл
+5. Задеплойте: `cd /Users/stanislav/supabase && supabase functions deploy fetch-asana-stats`
+6. Обновите данные в браузере (кнопка "Обновить данные" или `await forceRefreshAsanaStats()`)
 
 ## Путь задачи
 
