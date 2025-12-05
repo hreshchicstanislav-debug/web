@@ -1819,6 +1819,8 @@ function getEmptyAsanaStats() {
     carryOverFromPrev: 0,
     overtimeQty: 0,
     doneQty: 0,
+    doneStmQty: 0,
+    doneNonStmQty: 0,
     toShootQty: 0,
     remainingToPlan: 80,
     onHandQty: 0,
@@ -1890,20 +1892,26 @@ async function getAsanaStats() {
     const doneFactThisWeek = data.done_fact_this_week ?? 0;
     const carryOverFromPrev = data.carry_over_from_prev ?? 0;
     const doneQty = data.done_qty ?? doneFactThisWeek + carryOverFromPrev;
+    const doneStmQty = data.done_stm_qty ?? 0;
+    const doneNonStmQty = data.done_nonstm_qty ?? 0;
     
     const normalizedStats = {
       weekStartDate: data.week_start_date || null, // 'YYYY-MM-DD' - важно для getAsanaTasksDetailsByWeekStart
       weekEndDate: data.week_end_date || null,
       weekLoad: data.week_load ?? 0,
-      plan: data.plan ?? 80,
+      // План всегда статичен и равен 80 товаров в неделю (см. docs/tasks-backend-new-kpi-spec.md)
+      // Принудительно устанавливаем 80, даже если из API пришло другое значение (для совместимости со старыми данными)
+      plan: 80,
       doneFactThisWeek,
       carryOverFromPrev,
       overtimeQty: data.overtime_qty ?? 0,
       doneQty,
+      doneStmQty,
+      doneNonStmQty,
       toShootQty: data.to_shoot_qty ?? 0,
       remainingToPlan:
         data.remaining_to_plan ??
-        Math.max((data.plan ?? 80) - doneFactThisWeek, 0),
+        Math.max(80 - doneFactThisWeek, 0), // План всегда 80
       onHandQty: data.on_hand_qty ?? 0,
       warehouseQty: data.warehouse_qty ?? 0,
       shotNotProcessedQty: data.shot_not_processed_qty ?? 0,
@@ -1941,7 +1949,8 @@ function updateTasksCards(stats) {
   const overtimeQty = stats.overtimeQty ?? stats.overtime_qty ?? 0;
   const toShootQty = stats.toShootQty ?? stats.to_shoot_qty ?? 0;
   const weekLoad = stats.weekLoad ?? stats.week_load ?? 0;
-  const plan = stats.plan ?? 80;
+  // План всегда статичен и равен 80 товаров в неделю (см. docs/tasks-backend-new-kpi-spec.md)
+  const plan = 80;
   const remainingToPlan =
     stats.remainingToPlan ??
     stats.remaining_to_plan ??
@@ -1951,8 +1960,11 @@ function updateTasksCards(stats) {
   const shotNotProcessedQty =
     stats.shotNotProcessedQty ?? stats.shot_not_processed_qty ?? 0;
   const qErrorsCount = stats.qErrorsCount ?? stats.q_errors_count ?? 0;
+  const doneStmQty = stats.doneStmQty ?? stats.done_stm_qty ?? 0;
+  const doneNonStmQty = stats.doneNonStmQty ?? stats.done_nonstm_qty ?? 0;
 
   const completedValue = $('#completedCount');
+  const doneStmNonStmMeta = $('#doneStmNonStmMeta');
   const pendingValue = $('#pendingCount');
   const planValue = $('#planValue');
   const weekLoadValue = $('#weekLoadValue');
@@ -1966,6 +1978,9 @@ function updateTasksCards(stats) {
   const overtimeCard = $('#overtimeCard');
 
   if (completedValue) completedValue.textContent = doneQty;
+  if (doneStmNonStmMeta) {
+    doneStmNonStmMeta.textContent = `СТМ: ${doneStmQty} / НЕ СТМ: ${doneNonStmQty}`;
+  }
   if (pendingValue) pendingValue.textContent = toShootQty;
   if (planValue) planValue.textContent = plan;
   if (weekLoadValue) weekLoadValue.textContent = weekLoad;
@@ -1986,18 +2001,22 @@ function updateTasksCards(stats) {
     remainingText.textContent = `товаров (план: ${plan})`;
   }
   
-  const shotNotProcessedEl = $('#secondaryShot');
-  const onHandEl = $('#secondaryOnHand');
-  const warehouseEl = $('#secondaryWarehouse');
-  const qErrorsValueEl = $('#qErrorsValue');
-  const qErrorsIconEl = $('#qErrorsIcon');
-
-  if (shotNotProcessedEl) shotNotProcessedEl.textContent = shotNotProcessedQty;
-  if (onHandEl) onHandEl.textContent = onHandQty;
-  if (warehouseEl) warehouseEl.textContent = warehouseQty;
-  if (qErrorsValueEl) qErrorsValueEl.textContent = qErrorsCount;
-  if (qErrorsIconEl) {
-    qErrorsIconEl.style.visibility = qErrorsCount > 0 ? 'visible' : 'hidden';
+  // Обновление операционных карточек
+  const onHandValueEl = $('#kpiOnHandValue');
+  const warehouseValueEl = $('#kpiWarehouseValue');
+  const shotNotProcessedValueEl = $('#kpiShotNotProcessedValue');
+  
+  if (onHandValueEl) onHandValueEl.textContent = onHandQty;
+  if (warehouseValueEl) warehouseValueEl.textContent = warehouseQty;
+  if (shotNotProcessedValueEl) shotNotProcessedValueEl.textContent = shotNotProcessedQty;
+  
+  // Обновление подписи для qErrorsCount (если есть)
+  const qErrorsNoteEl = document.querySelector('#tasksOperationalKpi p');
+  if (qErrorsNoteEl && qErrorsCount > 0) {
+    qErrorsNoteEl.innerHTML = `Задач с ошибкой Q: <strong style="color: #d32f2f;">${qErrorsCount}</strong>`;
+    qErrorsNoteEl.style.display = 'block';
+  } else if (qErrorsNoteEl && qErrorsCount === 0) {
+    qErrorsNoteEl.style.display = 'none';
   }
 }
 
@@ -2007,6 +2026,16 @@ let tasksDetailsExpanded = false;
 let cachedTasksDetails = null;
 let cachedTasksStats = null; // Кеш для статистики
 let lastAsanaWeekStart = null; // string | null - последняя неделя Asana для загрузки деталей задач
+
+// Состояние фильтров для деталей задач
+const tasksDetailsFilterState = {
+  mode: 'operational', // 'operational' | 'all'
+  type: 'all',         // 'all' | 'СТМ' | 'НЕ СТМ'
+  priority: 'all',     // 'all' | '🔥 Срочно' | 'Высокий' | 'Средний'
+  showCompleted: false,
+  onlyQErrors: false,
+  status: 'all',       // 'all' | 'on_hand' | 'warehouse' | 'shot_not_processed' | 'completed' | 'other'
+};
 
 async function renderTasks() {
   const app = $('#app');
@@ -2037,25 +2066,57 @@ async function renderTasks() {
   const overtimeQty = stats.overtimeQty ?? stats.overtime_qty ?? 0;
   const doneQty = stats.doneQty ?? stats.done_qty ?? (doneFact + carryOver);
   const toShootQty = stats.toShootQty ?? stats.to_shoot_qty ?? 0;
-  const plan = stats.plan ?? 80;
+  // План всегда статичен и равен 80 товаров в неделю (см. docs/tasks-backend-new-kpi-spec.md)
+  const plan = 80;
   const weekLoad = stats.weekLoad ?? stats.week_load ?? doneFact + toShootQty;
   const remainingToPlan =
     stats.remainingToPlan ??
     stats.remaining_to_plan ??
-    Math.max(plan - doneFact, 0);
+    Math.max(80 - doneFact, 0);
   const onHandQty = stats.onHandQty ?? stats.on_hand_qty ?? 0;
   const warehouseQty = stats.warehouseQty ?? stats.warehouse_qty ?? 0;
   const shotNotProcessedQty =
     stats.shotNotProcessedQty ?? stats.shot_not_processed_qty ?? 0;
   const qErrorsCount = stats.qErrorsCount ?? stats.q_errors_count ?? 0;
+  const doneStmQty = stats.doneStmQty ?? stats.done_stm_qty ?? 0;
+  const doneNonStmQty = stats.doneNonStmQty ?? stats.done_nonstm_qty ?? 0;
   
   app.innerHTML = `
+    <div class="tasks-page">
     <h1 style="margin: 0 0 12px 0; font-size: 24px;">Задачи Asana</h1>
     
+      <div id="tasksHeader">
+      <!-- Операционный блок: три карточки -->
+      <div id="tasksOperationalKpi" class="tasks-kpi-section tasks-kpi-section--operational" style="margin-bottom: 16px;">
+        <div class="kpi-grid tasks-kpi-grid-operational">
+          <div id="kpiOnHandCard" class="kpi-card" style="background: #fff3e0; border-color: #ff9800;">
+            <h3 class="kpi-title" style="color: #e65100;">Уже на руках</h3>
+            <div id="kpiOnHandValue" class="kpi-value" style="color: #bf360c;">${onHandQty}</div>
+            <p class="kpi-subtext">товаров</p>
+          </div>
+          
+          <div id="kpiWarehouseCard" class="kpi-card" style="background: #e3f2fd; border-color: #2196f3;">
+            <h3 class="kpi-title" style="color: #1565c0;">Нужно взять со склада</h3>
+            <div id="kpiWarehouseValue" class="kpi-value" style="color: #0d47a1;">${warehouseQty}</div>
+            <p class="kpi-subtext">товаров</p>
+          </div>
+          
+          <div id="kpiShotNotProcessedCard" class="kpi-card" style="background: #f3e5f5; border-color: #9c27b0;">
+            <h3 class="kpi-title" style="color: #6a1b9a;">Сфоткано, но не обработано</h3>
+            <div id="kpiShotNotProcessedValue" class="kpi-value" style="color: #4a148c;">${shotNotProcessedQty}</div>
+            <p class="kpi-subtext">товаров</p>
+          </div>
+        </div>
+        ${qErrorsCount > 0 ? `<p style="font-size: 11px; color: var(--text-secondary); margin-top: 8px; text-align: center;">Задач с ошибкой Q: <strong style="color: #d32f2f;">${qErrorsCount}</strong></p>` : ''}
+      </div>
+      
+      <!-- Недельные KPI -->
+      <div id="tasksWeeklyKpi" class="tasks-kpi-section tasks-kpi-section--weekly">
     <div id="tasksGrid" class="kpi-grid">
       <div class="kpi-card kpi-card--done">
         <h3 class="kpi-title">Сделано</h3>
         <div id="completedCount" class="kpi-value kpi-value--done">${doneQty}</div>
+            <div id="doneStmNonStmMeta" class="kpi-meta kpi-meta--stm-split" style="font-size: 11px; color: var(--text-secondary); margin-top: 2px; justify-content: center;">СТМ: ${doneStmQty} / НЕ СТМ: ${doneNonStmQty}</div>
         <div class="kpi-meta kpi-meta--primary">
           <span>Факт</span>
           <strong id="doneFactValue">${doneFact}</strong>
@@ -2066,20 +2127,20 @@ async function renderTasks() {
         </div>
       </div>
       
-      <div class="kpi-card kpi-card--pending">
-        <h3 class="kpi-title">Предстоит отснять</h3>
-        <div id="pendingCount" class="kpi-value kpi-value--pending">${toShootQty}</div>
-        <p class="kpi-subtext">товаров</p>
-      </div>
-      
       <div class="kpi-card kpi-card--plan">
-        <h3 class="kpi-title">Запланировано</h3>
+            <h3 class="kpi-title">План недели</h3>
         <div id="planValue" class="kpi-value kpi-value--plan">${plan}</div>
-        <p class="kpi-subtext">динамический план недели</p>
+            <p class="kpi-subtext">товаров</p>
         <div class="kpi-meta">
           <span>Нагрузка недели</span>
           <strong id="weekLoadValue">${weekLoad}</strong>
         </div>
+      </div>
+          
+          <div class="kpi-card kpi-card--pending">
+            <h3 class="kpi-title">Предстоит отснять</h3>
+            <div id="pendingCount" class="kpi-value kpi-value--pending">${toShootQty}</div>
+            <p class="kpi-subtext">товаров</p>
       </div>
       
       <div id="cardRemaining" class="kpi-card kpi-card--remaining ${remainingToPlan > 0 ? '' : 'kpi-card--remaining-success'}">
@@ -2091,28 +2152,11 @@ async function renderTasks() {
       </div>
     
       <div id="overtimeCard" class="kpi-card kpi-card--overtime ${overtimeQty > 0 ? '' : 'kpi-card--muted'}">
-        <h3 class="kpi-title">Переработка этой недели</h3>
+            <h3 class="kpi-title">Переработка недели</h3>
         <div id="overtimeQty" class="kpi-value kpi-value--overtime">${overtimeQty}</div>
         <p class="kpi-subtext">товаров сверх плана</p>
       </div>
     </div>
-      
-    <div id="secondaryMetrics" class="secondary-metrics">
-      <div class="secondary-metrics-row">
-        <span>Сфоткано, но не обработано</span>
-        <strong id="secondaryShot">${shotNotProcessedQty}</strong>
-      </div>
-      <div class="secondary-metrics-row">
-        <span>Уже на руках</span>
-        <strong id="secondaryOnHand">${onHandQty}</strong>
-      </div>
-      <div class="secondary-metrics-row">
-        <span>Нужно взять со склада</span>
-        <strong id="secondaryWarehouse">${warehouseQty}</strong>
-      </div>
-      <div class="secondary-metrics-row ${qErrorsCount > 0 ? 'secondary-metrics-row--alert' : ''}">
-        <span>Ошибки Q <span id="qErrorsIcon" class="q-errors-icon ${qErrorsCount > 0 ? '' : 'is-hidden'}">⚠️</span></span>
-        <strong id="qErrorsValue">${qErrorsCount}</strong>
       </div>
     </div>
     
@@ -2128,7 +2172,47 @@ async function renderTasks() {
     </div>
     
     <div id="tasksDetailsContainer" class="tasks-details-container ${tasksDetailsExpanded ? 'expanded' : ''}" style="margin-top: 16px;">
+      <div id="tasksDetailsFilters" class="tasks-filters" style="margin-bottom: 12px; padding: 12px; background: var(--bg-muted); border-radius: 8px;">
+        <div class="tasks-filters-row" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="tasks-filters-mode" style="display: flex; gap: 8px;">
+            <button type="button" class="tasks-filter-mode-btn ${tasksDetailsFilterState.mode === 'operational' ? 'tasks-filter-mode-btn--active' : ''}" data-mode="operational" style="padding: 6px 12px; border: 1px solid var(--border-default); background: ${tasksDetailsFilterState.mode === 'operational' ? 'var(--brand-primary)' : 'var(--bg-surface)'}; color: ${tasksDetailsFilterState.mode === 'operational' ? 'var(--text-inverse)' : 'var(--text-primary)'}; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: ${tasksDetailsFilterState.mode === 'operational' ? '600' : '400'};">Только операционные</button>
+            <button type="button" class="tasks-filter-mode-btn ${tasksDetailsFilterState.mode === 'all' ? 'tasks-filter-mode-btn--active' : ''}" data-mode="all" style="padding: 6px 12px; border: 1px solid var(--border-default); background: ${tasksDetailsFilterState.mode === 'all' ? 'var(--brand-primary)' : 'var(--bg-surface)'}; color: ${tasksDetailsFilterState.mode === 'all' ? 'var(--text-inverse)' : 'var(--text-primary)'}; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: ${tasksDetailsFilterState.mode === 'all' ? '600' : '400'};">Все задачи</button>
+          </div>
+          <div class="tasks-filters-selects" style="display: flex; gap: 16px; flex-wrap: wrap;">
+            <label class="tasks-filter-label" style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+              Тип товара:
+              <select id="tasksFilterType" class="tasks-filter-select" style="padding: 4px 8px; border: 1px solid var(--border-default); border-radius: 4px; font-size: 13px;">
+                <option value="all" ${tasksDetailsFilterState.type === 'all' ? 'selected' : ''}>Все</option>
+                <option value="СТМ" ${tasksDetailsFilterState.type === 'СТМ' ? 'selected' : ''}>СТМ</option>
+                <option value="НЕ СТМ" ${tasksDetailsFilterState.type === 'НЕ СТМ' ? 'selected' : ''}>НЕ СТМ</option>
+              </select>
+            </label>
+            <label class="tasks-filter-label" style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+              Приоритет:
+              <select id="tasksFilterPriority" class="tasks-filter-select" style="padding: 4px 8px; border: 1px solid var(--border-default); border-radius: 4px; font-size: 13px;">
+                <option value="all" ${tasksDetailsFilterState.priority === 'all' ? 'selected' : ''}>Все</option>
+                <option value="🔥 Срочно" ${tasksDetailsFilterState.priority === '🔥 Срочно' ? 'selected' : ''}>🔥 Срочно</option>
+                <option value="Высокий" ${tasksDetailsFilterState.priority === 'Высокий' ? 'selected' : ''}>Высокий</option>
+                <option value="Средний" ${tasksDetailsFilterState.priority === 'Средний' ? 'selected' : ''}>Средний</option>
+              </select>
+            </label>
+          </div>
+          <div class="tasks-filters-checkboxes" style="display: flex; gap: 16px; flex-wrap: wrap;">
+            <label class="tasks-filter-checkbox" style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+              <span>Показать выполненные задачи недели</span>
+              <input type="checkbox" id="tasksFilterShowCompleted" ${tasksDetailsFilterState.showCompleted ? 'checked' : ''} style="cursor: pointer;" />
+            </label>
+            <label class="tasks-filter-checkbox" style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+              <span>Показать только задачи с ошибкой Q</span>
+              <input type="checkbox" id="tasksFilterOnlyQErrors" ${tasksDetailsFilterState.onlyQErrors ? 'checked' : ''} style="cursor: pointer;" />
+            </label>
+          </div>
+        </div>
+      </div>
+      <div id="tasksDetailsInner" class="tasks-details-inner">
       <div id="tasksDetailsList" class="tasks-details-panel"></div>
+      </div>
+    </div>
     </div>
   `;
   
@@ -2147,6 +2231,8 @@ async function renderTasks() {
     warehouseQty,
     shotNotProcessedQty,
     qErrorsCount,
+    doneStmQty,
+    doneNonStmQty,
     weekStartDate: stats.weekStartDate || stats.week_start_date || null
   });
   
@@ -2288,6 +2374,298 @@ async function renderTasks() {
       }
     });
   }
+  
+  // Обработчики событий для фильтров
+  setupTasksDetailsFilters();
+  
+  // Синхронизируем UI фильтров с начальным состоянием
+  syncTasksDetailsFiltersUiFromState();
+  
+  // Обновляем визуальное состояние операционных карточек
+  updateOperationalCardsVisualState();
+  
+  // Обработчики кликов по операционным карточкам
+  setupTasksOperationalKpiInteractions();
+}
+
+/**
+ * Настраивает обработчики кликов по верхним операционным карточкам
+ * Связывает клики по карточкам с фильтрами блока «Показать подробности»
+ */
+function setupTasksOperationalKpiInteractions() {
+  const onHandCard = $('#kpiOnHandCard');
+  const warehouseCard = $('#kpiWarehouseCard');
+  const shotNotProcessedCard = $('#kpiShotNotProcessedCard');
+  
+  if (onHandCard) {
+    onHandCard.style.cursor = 'pointer';
+    onHandCard.addEventListener('click', () => {
+      setTasksDetailsStatusFilter('on_hand');
+      expandTasksDetailsSectionIfCollapsed();
+    });
+  }
+  
+  if (warehouseCard) {
+    warehouseCard.style.cursor = 'pointer';
+    warehouseCard.addEventListener('click', () => {
+      setTasksDetailsStatusFilter('warehouse');
+      expandTasksDetailsSectionIfCollapsed();
+    });
+  }
+  
+  if (shotNotProcessedCard) {
+    shotNotProcessedCard.style.cursor = 'pointer';
+    shotNotProcessedCard.addEventListener('click', () => {
+      setTasksDetailsStatusFilter('shot_not_processed');
+      expandTasksDetailsSectionIfCollapsed();
+    });
+  }
+}
+
+/**
+ * Синхронизирует UI фильтров с состоянием tasksDetailsFilterState
+ * Обновляет кнопки режима, селекты и чекбоксы в соответствии с текущим состоянием
+ */
+function syncTasksDetailsFiltersUiFromState() {
+  // Синхронизация кнопок режима
+  const modeButtons = document.querySelectorAll('.tasks-filter-mode-btn');
+  modeButtons.forEach(btn => {
+    const mode = btn.dataset.mode;
+    const isActive = mode === tasksDetailsFilterState.mode;
+    btn.classList.toggle('tasks-filter-mode-btn--active', isActive);
+    btn.style.background = isActive ? 'var(--brand-primary)' : 'var(--bg-surface)';
+    btn.style.color = isActive ? 'var(--text-inverse)' : 'var(--text-primary)';
+    btn.style.fontWeight = isActive ? '600' : '400';
+  });
+  
+  // Синхронизация селекта типа
+  const typeSelect = document.getElementById('tasksFilterType');
+  if (typeSelect) {
+    typeSelect.value = tasksDetailsFilterState.type;
+  }
+  
+  // Синхронизация селекта приоритета
+  const prioritySelect = document.getElementById('tasksFilterPriority');
+  if (prioritySelect) {
+    prioritySelect.value = tasksDetailsFilterState.priority;
+  }
+  
+  // Синхронизация чекбокса "Показать выполненные"
+  const showCompletedCheckbox = document.getElementById('tasksFilterShowCompleted');
+  if (showCompletedCheckbox) {
+    showCompletedCheckbox.checked = tasksDetailsFilterState.showCompleted;
+  }
+  
+  // Синхронизация чекбокса "Только ошибки Q"
+  const onlyQErrorsCheckbox = document.getElementById('tasksFilterOnlyQErrors');
+  if (onlyQErrorsCheckbox) {
+    onlyQErrorsCheckbox.checked = tasksDetailsFilterState.onlyQErrors;
+  }
+}
+
+/**
+ * Обновляет визуальное состояние операционных карточек в зависимости от активного статуса
+ */
+function updateOperationalCardsVisualState() {
+  const onHandCard = $('#kpiOnHandCard');
+  const warehouseCard = $('#kpiWarehouseCard');
+  const shotNotProcessedCard = $('#kpiShotNotProcessedCard');
+  
+  const activeStatus = tasksDetailsFilterState.status;
+  
+  // Функция для установки активного состояния карточки
+  function setCardActive(card, isActive) {
+    if (!card) return;
+    if (isActive) {
+      card.style.borderWidth = '2px';
+      card.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
+      card.style.transform = 'scale(1.02)';
+      card.style.transition = 'all 0.2s ease';
+    } else {
+      card.style.borderWidth = '1px';
+      card.style.boxShadow = 'none';
+      card.style.transform = 'scale(1)';
+    }
+  }
+  
+  // Обновляем состояние всех карточек
+  setCardActive(onHandCard, activeStatus === 'on_hand');
+  setCardActive(warehouseCard, activeStatus === 'warehouse');
+  setCardActive(shotNotProcessedCard, activeStatus === 'shot_not_processed');
+}
+
+/**
+ * Устанавливает фильтр по операционному статусу из кликов по верхним операционным карточкам
+ * Связывает верхние операционные карточки с режимом «Показать подробности»
+ * @param {string} nextStatus - статус для фильтрации: 'on_hand' | 'warehouse' | 'shot_not_processed' | 'all'
+ */
+function setTasksDetailsStatusFilter(nextStatus) {
+  // Всегда переключаем в режим 'operational', когда кликаем по верхним операционным карточкам
+  tasksDetailsFilterState.mode = 'operational';
+  tasksDetailsFilterState.status = nextStatus;
+  
+  // При клике по карточке сбрасываем тип/приоритет в 'all', чтобы не было неожиданных комбинаций
+  tasksDetailsFilterState.type = 'all';
+  tasksDetailsFilterState.priority = 'all';
+  
+  // По умолчанию завершённые задачи при операционном фокусе скрываем
+  tasksDetailsFilterState.showCompleted = false;
+  
+  // Обновляем визуальное состояние карточек
+  updateOperationalCardsVisualState();
+  
+  // Синхронизируем UI фильтров с новым состоянием
+  syncTasksDetailsFiltersUiFromState();
+  
+  // После изменения состояния перерисовываем подробности
+  renderTasksDetailsFromCache();
+}
+
+/**
+ * Раскрывает секцию «Показать подробности», если она свернута
+ */
+function expandTasksDetailsSectionIfCollapsed() {
+  const detailsContainer = $('#tasksDetailsContainer');
+  const showDetailsBtn = $('#showDetails');
+  
+  if (!detailsContainer || !showDetailsBtn) return;
+  
+  // Проверяем, свернута ли секция (нет класса 'expanded')
+  if (!detailsContainer.classList.contains('expanded')) {
+    // Раскрываем секцию
+    tasksDetailsExpanded = true;
+    detailsContainer.classList.add('expanded');
+    showDetailsBtn.textContent = 'Скрыть подробности';
+    
+    // Если данных нет в кеше, загружаем их
+    if (!cachedTasksDetails || cachedTasksDetails.length === 0) {
+      const weekStart = lastAsanaWeekStart;
+      if (weekStart) {
+        getAsanaTasksDetailsByWeekStart(weekStart).then(tasks => {
+          cachedTasksDetails = tasks;
+          renderTasksDetailsFromCache();
+        }).catch(error => {
+          console.error('[[TasksTab Details Error]] Ошибка загрузки детальных данных:', error);
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Настраивает обработчики событий для панели фильтров задач
+ */
+function setupTasksDetailsFilters() {
+  // Обработчики кнопок режима (Только операционные / Все задачи)
+  const modeButtons = document.querySelectorAll('.tasks-filter-mode-btn');
+  modeButtons.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const mode = e.target.dataset.mode;
+      tasksDetailsFilterState.mode = mode;
+      
+      // Если переключаемся на 'all', сбрасываем фильтр по статусу
+      if (mode === 'all') {
+        tasksDetailsFilterState.status = 'all';
+      }
+      
+      // Обновляем визуальное состояние карточек
+      updateOperationalCardsVisualState();
+      
+      // Синхронизируем UI
+      syncTasksDetailsFiltersUiFromState();
+      
+      renderTasksDetailsFromCache();
+    });
+  });
+  
+  // Обработчик селекта типа товара
+  const typeSelect = document.getElementById('tasksFilterType');
+  if (typeSelect) {
+    typeSelect.addEventListener('change', (e) => {
+      tasksDetailsFilterState.type = e.target.value;
+      // При ручном изменении типа сбрасываем фильтр по статусу
+      if (e.target.value !== 'all') {
+        tasksDetailsFilterState.status = 'all';
+      }
+      updateOperationalCardsVisualState();
+      syncTasksDetailsFiltersUiFromState();
+      renderTasksDetailsFromCache();
+    });
+  }
+  
+  // Обработчик селекта приоритета
+  const prioritySelect = document.getElementById('tasksFilterPriority');
+  if (prioritySelect) {
+    prioritySelect.addEventListener('change', (e) => {
+      tasksDetailsFilterState.priority = e.target.value;
+      // При ручном изменении приоритета сбрасываем фильтр по статусу
+      if (e.target.value !== 'all') {
+        tasksDetailsFilterState.status = 'all';
+      }
+      updateOperationalCardsVisualState();
+      syncTasksDetailsFiltersUiFromState();
+      renderTasksDetailsFromCache();
+    });
+  }
+  
+  // Обработчик чекбокса "Показать выполненные задачи недели"
+  const showCompletedCheckbox = document.getElementById('tasksFilterShowCompleted');
+  if (showCompletedCheckbox) {
+    showCompletedCheckbox.addEventListener('change', (e) => {
+      tasksDetailsFilterState.showCompleted = e.target.checked;
+      updateOperationalCardsVisualState();
+      syncTasksDetailsFiltersUiFromState();
+      renderTasksDetailsFromCache();
+    });
+  }
+  
+  // Обработчик чекбокса "Показать только задачи с ошибкой Q"
+  const onlyQErrorsCheckbox = document.getElementById('tasksFilterOnlyQErrors');
+  if (onlyQErrorsCheckbox) {
+    onlyQErrorsCheckbox.addEventListener('change', (e) => {
+      tasksDetailsFilterState.onlyQErrors = e.target.checked;
+      updateOperationalCardsVisualState();
+      syncTasksDetailsFiltersUiFromState();
+      renderTasksDetailsFromCache();
+    });
+  }
+}
+
+/**
+ * Вычисляет операционный статус задачи на основе её полей
+ * Подготовка для фильтров и группировки: "Только операционные", статусы "Уже на руках", "Со склада", "Сфоткано, но не обработано"
+ * 
+ * @param {Object} task - объект задачи из asana_tasks
+ * @returns {string} - один из статусов: 'on_hand', 'warehouse', 'shot_not_processed', 'completed', 'other'
+ */
+function computeOperationalStatus(task) {
+  const completed = !!task.completed;
+  const shotAt = task.shot_at;
+  const processedAt = task.processed_at;
+  const source = task.product_source;
+
+  // "Уже на руках": товар принесли, но ещё не сфоткали
+  if (!completed && source === 'PRINESLI' && !shotAt) {
+    return 'on_hand';
+  }
+
+  // "Нужно взять со склада": товар нужно взять со склада, работа не начата
+  if (!completed && source === 'WAREHOUSE' && !shotAt && !processedAt) {
+    return 'warehouse';
+  }
+
+  // "Сфоткано, но не обработано": уже есть снимки, но нет обработки, задача не завершена
+  if (!completed && !!shotAt && !processedAt) {
+    return 'shot_not_processed';
+  }
+
+  // "Сделано": задача завершена
+  if (completed) {
+    return 'completed';
+  }
+
+  // Всё остальное
+  return 'other';
 }
 
 // Функция для получения детальных данных о задачах по неделе
@@ -2308,7 +2686,7 @@ async function getAsanaTasksDetailsByWeekStart(weekStartStr) {
 
     const { data: rows, error } = await supabaseClient
       .from('asana_tasks')
-      .select('task_name, q, product_source, shot_at, processed_at, completed_at, due_on, week_start_date, completed, project_gid, assignee_gid')
+      .select('task_name, q, product_source, shot_at, processed_at, completed_at, due_on, week_start_date, completed, project_gid, assignee_gid, task_type_label, task_type_gid, priority_label, priority_gid')
       .or(`week_shot.eq.${weekStartStr},week_processed.eq.${weekStartStr},week_start_date.eq.${weekStartStr}`)
       .order('processed_at', { ascending: false })
       .order('shot_at', { ascending: false })
@@ -2323,10 +2701,12 @@ async function getAsanaTasksDetailsByWeekStart(weekStartStr) {
     const distinctProjects = Array.from(new Set(safeRows.map(r => r.project_gid).filter(Boolean)));
     const distinctAssignees = Array.from(new Set(safeRows.map(r => r.assignee_gid).filter(Boolean)));
 
-    // Вычисляем hasQError для каждой строки и подсчитываем ошибки
+    // Вычисляем hasQError и operationalStatus для каждой строки
+    // Подготовка для фильтров и группировки: тип задачи, приоритет и операционный статус
     const rowsWithErrors = safeRows.map((row) => ({
       ...row,
       hasQError: row.q == null || Number(row.q) <= 0,
+      operationalStatus: computeOperationalStatus(row),
     }));
     
     const qErrorsCount = rowsWithErrors.filter(row => row.hasQError).length;
@@ -2335,8 +2715,7 @@ async function getAsanaTasksDetailsByWeekStart(weekStartStr) {
       weekStartDate: weekStartStr,
       distinct_project_gids: distinctProjects,
       distinct_assignee_gids: distinctAssignees,
-      qErrorsCount: qErrorsCount,
-      tasksDetailsOnlyQErrors: window.tasksDetailsFilterState?.showErrorsOnly || false
+      qErrorsCount: qErrorsCount
     });
 
     if (safeRows.length === 0) {
@@ -2422,96 +2801,53 @@ async function renderTasksDetails() {
   }
 }
 
-// Функция для отображения данных из кеша
-function renderTasksDetailsFromCache() {
-  const detailsList = $('#tasksDetailsList');
-  if (!detailsList) return;
-  
-  if (!cachedTasksDetails || cachedTasksDetails.length === 0) {
-    detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Нет данных для отображения</p>';
-    return;
-  }
-  
-  // Функция для определения ошибки Q: q == null или q <= 0
-  function hasQError(task) {
-    if (typeof task.hasQError === 'boolean') {
-      return task.hasQError;
+/**
+ * Группирует задачи по операционному статусу
+ * @param {Array} rows - массив задач (уже отфильтрованных)
+ * @returns {Object} - объект с группами задач по статусам
+ */
+function groupTasksByOperationalStatus(rows) {
+  const groups = {
+    on_hand: [],
+    warehouse: [],
+    shot_not_processed: [],
+    completed: [],
+    other: [],
+  };
+
+  for (const task of rows) {
+    const status = task.operationalStatus || 'other';
+    if (status === 'on_hand') {
+      groups.on_hand.push(task);
+    } else if (status === 'warehouse') {
+      groups.warehouse.push(task);
+    } else if (status === 'shot_not_processed') {
+      groups.shot_not_processed.push(task);
+    } else if (status === 'completed') {
+      groups.completed.push(task);
+    } else {
+      groups.other.push(task);
     }
-    // Ошибка Q: q отсутствует или <= 0
-    return task.q == null || task.q <= 0;
-  }
-  
-  // Функция для форматирования источника товара
-  function formatProductSource(source) {
-    if (source === 'PRINESLI') return 'Принесли';
-    if (source === 'WAREHOUSE') return 'Взять со склада';
-    return source || '—';
-  }
-  
-  // Подсчёт ошибок Q в исходных данных (до фильтрации)
-  const qErrorsCount = cachedTasksDetails.filter(task => hasQError(task)).length;
-  
-  // Фильтр состояния: только флаг "показать только ошибки Q"
-  // Примечание: фильтр по проекту убран, так как Edge Function уже фильтрует по проекту "Arbuz Контент. Задачи"
-  window.tasksDetailsFilterState = window.tasksDetailsFilterState || { showErrorsOnly: false };
-  const filterState = window.tasksDetailsFilterState;
-
-  // Фильтрация строк: только по флагу "показать только ошибки Q"
-  const filteredRows = cachedTasksDetails.filter(task => {
-    if (filterState.showErrorsOnly) {
-      return hasQError(task);
-    }
-    return true;
-  });
-
-  console.debug('[[TasksTab Details Debug]] Фильтрация деталей', {
-    totalRows: cachedTasksDetails.length,
-    qErrorsCount: qErrorsCount,
-    filteredRows: filteredRows.length,
-    showErrorsOnly: filterState.showErrorsOnly
-  });
-
-  // Заголовок с информацией об ошибках Q
-  let headerHTML = '';
-  if (qErrorsCount > 0) {
-    headerHTML = `<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Всего задач с ошибкой Q: <strong style="color: #d32f2f;">${qErrorsCount}</strong></p>`;
   }
 
-  // Контролы фильтрации (только чекбокс "Показать только ошибки Q")
-  let controlsHTML = `
-    <div class="tasks-filter-row">
-      <label class="tasks-filter-label">
-        <input type="checkbox" id="tasksFilterErrors" ${filterState.showErrorsOnly ? 'checked' : ''} />
-        Показать только задачи с ошибкой Q
-      </label>
-    </div>
-  `;
+  return groups;
+}
 
-  let tableHTML = headerHTML + controlsHTML + `
-    <table>
-      <thead>
-        <tr>
-          <th>Задача</th>
-          <th>Q</th>
-          <th>Товар</th>
-          <th>Статус</th>
-          <th>Сфоткал</th>
-          <th>Обработал</th>
-          <th>Дедлайн</th>
-        </tr>
-      </thead>
-      <tbody>
-  `;
-  
-  filteredRows.forEach((task, index) => {
+/**
+ * Рендерит одну строку задачи в таблице
+ * @param {Object} task - объект задачи
+ * @param {number} index - индекс для чередования стилей
+ * @returns {string} - HTML строка задачи
+ */
+function renderTasksDetailsRow(task, index) {
     const taskName = task.task_name || 'Без названия';
     const q = task.q || 0;
-    const productSource = formatProductSource(task.product_source);
+  const productSource = task.product_source === 'PRINESLI' ? 'Принесли' : (task.product_source === 'WAREHOUSE' ? 'Взять со склада' : (task.product_source || '—'));
     const dueOn = formatDate(task.due_on);
     const shotAt = formatDate(task.shot_at);
     const processedAt = formatDate(task.processed_at || task.completed_at);
     const isCompleted = task.completed === true;
-    const hasErr = hasQError(task);
+  const hasErr = task.hasQError || (task.q == null || task.q <= 0);
     const qDisplay = hasErr ? '⚠ Q!' : q;
     const statusText = isCompleted ? 'Сделано' : 'Не сделано';
     const statusValueClass = isCompleted
@@ -2528,8 +2864,11 @@ function renderTasksDetailsFromCache() {
     rowClasses.push('task-card');
     const rowClassName = rowClasses.join(' ');
     
-    tableHTML += `
+  return `
       <tr class="${rowClassName} ${hasErr ? 'q-error' : ''}">
+        <td class="task-row-cell" data-label="№" style="text-align: center; color: var(--text-secondary); font-size: 12px; width: 40px;">
+          ${index + 1}
+        </td>
         <td class="task-row-cell task-row-cell--name" data-label="Задача">
           <div class="task-field">
             <span class="task-field-label">Задача</span>
@@ -2579,7 +2918,174 @@ function renderTasksDetailsFromCache() {
         </td>
       </tr>
     `;
+}
+
+/**
+ * Применяет фильтры к списку задач на основе состояния tasksDetailsFilterState
+ * @param {Array} rawRows - массив задач из кеша
+ * @returns {Array} - отфильтрованный массив задач
+ */
+function applyTasksDetailsFilters(rawRows) {
+  const { mode, type, priority, showCompleted, onlyQErrors, status } = tasksDetailsFilterState;
+  
+  return rawRows.filter(task => {
+    // 1) Фильтр по режиму: 'Только операционные' / 'Все задачи'
+    if (mode === 'operational') {
+      const op = task.operationalStatus;
+      const isOperational = op === 'on_hand' || op === 'warehouse' || op === 'shot_not_processed';
+      if (!isOperational) {
+        return false;
+      }
+    }
+
+    // 2) Фильтр по типу товара
+    if (type !== 'all') {
+      if (!task.task_type_label || task.task_type_label !== type) {
+        return false;
+      }
+    }
+
+    // 3) Фильтр по приоритету
+    if (priority !== 'all') {
+      if (!task.priority_label || task.priority_label !== priority) {
+        return false;
+      }
+    }
+
+    // 4) Фильтр по выполненности ("Показать выполненные задачи недели")
+    if (!showCompleted) {
+      // по умолчанию скрываем завершённые задачи
+      if (task.completed) {
+        return false;
+      }
+    }
+
+    // 5) Фильтр по ошибкам Q
+    if (onlyQErrors) {
+      if (!task.hasQError) {
+        return false;
+      }
+    }
+
+    // 6) Фильтр по операционному статусу (для кликов по верхним карточкам)
+    if (status !== 'all') {
+      const op = task.operationalStatus;
+      if (op !== status) {
+        return false;
+      }
+    }
+
+    return true;
   });
+}
+
+// Функция для отображения данных из кеша
+function renderTasksDetailsFromCache() {
+  const detailsList = $('#tasksDetailsList');
+  if (!detailsList) return;
+  
+  if (!cachedTasksDetails || cachedTasksDetails.length === 0) {
+    detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Нет данных для отображения</p>';
+    return;
+  }
+  
+  // Функция для определения ошибки Q: q == null или q <= 0
+  function hasQError(task) {
+    if (typeof task.hasQError === 'boolean') {
+      return task.hasQError;
+    }
+    // Ошибка Q: q отсутствует или <= 0
+    return task.q == null || task.q <= 0;
+  }
+  
+  // Функция для форматирования источника товара
+  function formatProductSource(source) {
+    if (source === 'PRINESLI') return 'Принесли';
+    if (source === 'WAREHOUSE') return 'Взять со склада';
+    return source || '—';
+  }
+  
+  // Подсчёт ошибок Q в исходных данных (до фильтрации)
+  const qErrorsCount = cachedTasksDetails.filter(task => hasQError(task)).length;
+  
+  // Применяем все фильтры из tasksDetailsFilterState
+  const filteredRows = applyTasksDetailsFilters(cachedTasksDetails);
+
+  console.debug('[[TasksTab Details Debug]] Фильтрация деталей', {
+    totalRows: cachedTasksDetails.length,
+    qErrorsCount: qErrorsCount,
+    filteredRows: filteredRows.length,
+    filterState: tasksDetailsFilterState
+  });
+
+  // Заголовок с информацией о количестве задач и ошибках Q
+  let headerHTML = '';
+  
+  // Счетчик задач: показываем количество отфильтрованных задач
+  const totalTasksCount = cachedTasksDetails.length;
+  const filteredTasksCount = filteredRows.length;
+  
+  // Определяем, активны ли фильтры (кроме режима 'operational' по умолчанию)
+  const hasActiveFilters = tasksDetailsFilterState.status !== 'all' || 
+                          tasksDetailsFilterState.type !== 'all' || 
+                          tasksDetailsFilterState.priority !== 'all' || 
+                          tasksDetailsFilterState.showCompleted || 
+                          tasksDetailsFilterState.onlyQErrors;
+  
+  if (hasActiveFilters && filteredTasksCount !== totalTasksCount) {
+    headerHTML += `<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Показано задач: <strong>${filteredTasksCount}</strong> из <strong>${totalTasksCount}</strong></p>`;
+  } else {
+    headerHTML += `<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Всего задач: <strong>${filteredTasksCount}</strong></p>`;
+  }
+  
+  if (qErrorsCount > 0) {
+    headerHTML += `<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Задач с ошибкой Q: <strong style="color: #d32f2f;">${qErrorsCount}</strong></p>`;
+  }
+
+  // Группируем отфильтрованные задачи по операционному статусу
+  const groups = groupTasksByOperationalStatus(filteredRows);
+  
+  // Контролы фильтрации (убраны, так как теперь фильтры в отдельной панели выше)
+  // data-label и @media (max-width: 768px) используются для превращения таблицы в мобильные карточки задач
+  // Адаптация не трогает десктоп-версию
+  let tableHTML = headerHTML + `
+    <table class="tasks-details-table">
+      <thead>
+        <tr>
+          <th style="width: 40px;">№</th>
+          <th>Задача</th>
+          <th>Q</th>
+          <th>Товар</th>
+          <th>Статус</th>
+          <th>Сфоткал</th>
+          <th>Обработал</th>
+          <th>Дедлайн</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  // Функция для добавления группы задач с заголовком
+  let rowIndex = 0;
+  function appendGroup(label, rows) {
+    if (!rows || rows.length === 0) return;
+    
+    // Добавляем заголовок группы с количеством задач в группе
+    tableHTML += `<tr class="tasks-details-group-row"><td colspan="8" style="font-weight: 600; font-size: 14px; padding: 12px 8px 8px 8px; background: var(--bg-muted); border-top: 2px solid var(--border-default);">${label} <span style="font-weight: 400; color: var(--text-secondary); font-size: 12px;">(${rows.length})</span></td></tr>`;
+    
+    // Добавляем строки задач этой группы
+    for (const task of rows) {
+      tableHTML += renderTasksDetailsRow(task, rowIndex);
+      rowIndex++;
+    }
+  }
+  
+  // Добавляем группы в фиксированном порядке
+  appendGroup('Уже на руках', groups.on_hand);
+  appendGroup('Нужно взять со склада', groups.warehouse);
+  appendGroup('Сфоткано, но не обработано', groups.shot_not_processed);
+  appendGroup('Выполненные задачи недели', groups.completed);
+  appendGroup('Прочие задачи', groups.other);
   
   tableHTML += `
       </tbody>
@@ -2591,19 +3097,6 @@ function renderTasksDetailsFromCache() {
   }
   
   detailsList.innerHTML = tableHTML;
-
-  // Обработчик чекбокса "Показать только задачи с ошибкой Q"
-  const errorsCheckbox = document.getElementById('tasksFilterErrors');
-  if (errorsCheckbox) {
-    errorsCheckbox.addEventListener('change', (e) => {
-      window.tasksDetailsFilterState = {
-        ...window.tasksDetailsFilterState,
-        showErrorsOnly: e.target.checked
-      };
-      console.debug('[TasksTab Details Debug] apply only-Q-errors filter:', e.target.checked, 'rows before:', cachedTasksDetails.length);
-      renderTasksDetailsFromCache();
-    });
-  }
   
   // Примечание: фильтр по проекту убран, так как Edge Function уже фильтрует по проекту "Arbuz Контент. Задачи"
   // Все задачи в таблице относятся к одному проекту, поэтому дополнительный выбор проекта не нужен

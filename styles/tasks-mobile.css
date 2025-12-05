@@ -309,35 +309,7 @@
   }
 }
 
-@media (max-width: 768px) {
-  #tasksGrid,
-  .kpi-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-  }
-
-  .kpi-card {
-    padding: 10px;
-  }
-
-  .kpi-title {
-    font-size: 11px;
-  }
-
-  .kpi-value {
-    font-size: 22px;
-    line-height: 1.2;
-  }
-
-  .kpi-subtext {
-    font-size: 10px;
-  }
-
-  .kpi-label {
-    font-size: 14px;
-    line-height: 1.3;
-  }
-}
+/* Старые стили для 768px заменены на новые ниже */
 
 @media (max-width: 720px) {
   body {
@@ -533,10 +505,284 @@
     order: 2;
   }
 }
+/* Контейнер для всей вкладки "Задачи" */
+.tasks-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+/* Операционная сетка KPI на desktop */
+.tasks-kpi-grid-operational {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* Стили для панели фильтров */
+.tasks-filters {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: var(--bg-muted);
+  border-radius: 8px;
+}
+
+.tasks-filters-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tasks-filters-mode {
+  display: flex;
+  gap: 8px;
+}
+
+.tasks-filter-mode-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 400;
+  transition: all 0.2s ease;
+}
+
+.tasks-filter-mode-btn--active {
+  background: var(--brand-primary);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+.tasks-filters-selects {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.tasks-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.tasks-filter-select {
+  padding: 4px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.tasks-filters-checkboxes {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.tasks-filter-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tasks-filter-checkbox input {
+  cursor: pointer;
+}
+
+/* Контейнер для деталей задач */
+#tasksDetailsContainer {
+  margin-top: 16px;
+  padding: 12px 0 0 0;
+  box-sizing: border-box;
+}
+
+.tasks-details-inner {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  /* Контейнер вкладки на мобильном */
+  .tasks-page {
+    padding: 12px;
+  }
+
+  /* Все KPI карточки в одну колонку */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+
+  .kpi-card {
+    width: 100%;
+  }
+
+  /* Операционная сетка тоже в одну колонку */
+  .tasks-kpi-grid-operational {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Кликабельные операционные карточки на мобильном */
+  #kpiOnHandCard,
+  #kpiWarehouseCard,
+  #kpiShotNotProcessedCard {
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  #kpiOnHandCard:active,
+  #kpiWarehouseCard:active,
+  #kpiShotNotProcessedCard:active {
+    transform: scale(0.98);
+  }
+
+  /* Шрифты для мобильного */
+  .kpi-card .kpi-title {
+    font-size: 13px;
+  }
+
+  .kpi-card .kpi-value {
+    font-size: 20px;
+  }
+
+  #tasksDetailsContainer {
+    font-size: 13px;
+  }
+
+  /* Панель фильтров в колонку */
+  #tasksDetailsFilters {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #tasksDetailsFilters .tasks-filters-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #tasksDetailsFilters .tasks-filters-mode {
+    flex-direction: column;
+  }
+
+  #tasksDetailsFilters select,
+  #tasksDetailsFilters button,
+  #tasksDetailsFilters label {
+    width: 100%;
+  }
+
+  .tasks-filter-label {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .tasks-filter-select {
+    width: 100%;
+  }
+
+  /* Таблица превращается в карточки на мобильном */
+  /* data-label и @media (max-width: 768px) используются для превращения таблицы в мобильные карточки задач */
+  /* Адаптация не трогает десктоп-версию */
+  .tasks-details-table,
+  .tasks-details-table thead,
+  .tasks-details-table tbody,
+  .tasks-details-table th,
+  .tasks-details-table td,
+  .tasks-details-table tr {
+    display: block;
+  }
+
+  .tasks-details-table thead {
+    display: none; /* заголовок колонок скрываем, вместо него будут data-label */
+  }
+
+  .tasks-details-table tr.task-row {
+    margin-bottom: 12px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    display: block;
+  }
+
+  .tasks-details-table td {
+    padding: 6px 0;
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    text-align: left;
+  }
+
+  .tasks-details-table td::before {
+    content: attr(data-label);
+    font-weight: 500;
+    color: var(--text-secondary);
+    min-width: 80px;
+    flex-shrink: 0;
+  }
+
+  .tasks-details-table td .task-field {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .tasks-details-table td .task-field-label {
+    display: none; /* скрываем внутренние лейблы, используем data-label */
+  }
+
+  .tasks-details-table td .task-row-meta {
+    display: none; /* скрываем мета-информацию на мобильном для компактности */
+  }
+
+  /* Заголовки групп на мобильном */
+  .tasks-details-group-row {
+    padding: 12px 0 8px 0;
+    border: none;
+    background: transparent;
+    font-weight: 600;
+    font-size: 14px;
+    margin-top: 16px;
+    margin-bottom: 8px;
+    display: block;
+  }
+
+  .tasks-details-group-row:first-child {
+    margin-top: 0;
+  }
+
+  .tasks-details-group-row td {
+    padding: 0;
+    display: block;
+    text-align: left;
+    border: none;
+  }
+
+  .tasks-details-group-row td::before {
+    display: none;
+  }
+}
+
 @media (max-width: 480px) {
   body {
     padding: 8px;
     font-size: 15px;
+  }
+
+  .tasks-page {
+    padding: 8px;
   }
 
   h1 {
@@ -544,7 +790,7 @@
   }
 
   .kpi-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr !important;
     gap: 6px;
   }
 
