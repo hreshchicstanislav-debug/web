@@ -1992,12 +1992,7 @@ function updateTasksCards(stats) {
   if (overtimeCard) overtimeCard.style.opacity = overtimeQty > 0 ? '1' : '0.5';
 
   if (cardRemaining && remainingValue && remainingText) {
-    const isPositive = remainingToPlan > 0;
-    cardRemaining.style.background = isPositive ? '#fce4ec' : '#e8f5e9';
-    cardRemaining.style.borderColor = isPositive ? '#e91e63' : '#4caf50';
-    const title = cardRemaining.querySelector('h3');
-    if (title) title.style.color = isPositive ? '#880e4f' : '#2e7d32';
-    remainingValue.style.color = isPositive ? '#c2185b' : '#1b5e20';
+    // Классы уже установлены в HTML, стили управляются через CSS
     remainingText.textContent = `товаров (план: ${plan})`;
   }
   
@@ -2013,7 +2008,7 @@ function updateTasksCards(stats) {
   // Обновление подписи для qErrorsCount (если есть)
   const qErrorsNoteEl = document.querySelector('#tasksOperationalKpi p');
   if (qErrorsNoteEl && qErrorsCount > 0) {
-    qErrorsNoteEl.innerHTML = `Задач с ошибкой Q: <strong style="color: #d32f2f;">${qErrorsCount}</strong>`;
+    qErrorsNoteEl.innerHTML = `Задач с ошибкой Q: <strong>${qErrorsCount}</strong>`;
     qErrorsNoteEl.style.display = 'block';
   } else if (qErrorsNoteEl && qErrorsCount === 0) {
     qErrorsNoteEl.style.display = 'none';
@@ -2083,31 +2078,31 @@ async function renderTasks() {
   
   app.innerHTML = `
     <div class="tasks-page">
-    <h1 style="margin: 0 0 12px 0; font-size: 24px;">Задачи Asana</h1>
+    <h1 class="tasks-page-title">Задачи Asana</h1>
     
       <div id="tasksHeader">
       <!-- Операционный блок: три карточки -->
-      <div id="tasksOperationalKpi" class="tasks-kpi-section tasks-kpi-section--operational" style="margin-bottom: 16px;">
+      <div id="tasksOperationalKpi" class="tasks-kpi-section tasks-kpi-section--operational">
         <div class="kpi-grid tasks-kpi-grid-operational">
-          <div id="kpiOnHandCard" class="kpi-card" style="background: #fff3e0; border-color: #ff9800;">
-            <h3 class="kpi-title" style="color: #e65100;">Уже на руках</h3>
-            <div id="kpiOnHandValue" class="kpi-value" style="color: #bf360c;">${onHandQty}</div>
+          <div id="kpiOnHandCard" class="kpi-card kpi-card--onhand kpi-card--clickable">
+            <h3 class="kpi-title">Уже на руках</h3>
+            <div id="kpiOnHandValue" class="kpi-value">${onHandQty}</div>
             <p class="kpi-subtext">товаров</p>
           </div>
           
-          <div id="kpiWarehouseCard" class="kpi-card" style="background: #e3f2fd; border-color: #2196f3;">
-            <h3 class="kpi-title" style="color: #1565c0;">Нужно взять со склада</h3>
-            <div id="kpiWarehouseValue" class="kpi-value" style="color: #0d47a1;">${warehouseQty}</div>
+          <div id="kpiWarehouseCard" class="kpi-card kpi-card--warehouse kpi-card--clickable">
+            <h3 class="kpi-title">Нужно взять со склада</h3>
+            <div id="kpiWarehouseValue" class="kpi-value">${warehouseQty}</div>
             <p class="kpi-subtext">товаров</p>
           </div>
           
-          <div id="kpiShotNotProcessedCard" class="kpi-card" style="background: #f3e5f5; border-color: #9c27b0;">
-            <h3 class="kpi-title" style="color: #6a1b9a;">Сфоткано, но не обработано</h3>
-            <div id="kpiShotNotProcessedValue" class="kpi-value" style="color: #4a148c;">${shotNotProcessedQty}</div>
+          <div id="kpiShotNotProcessedCard" class="kpi-card kpi-card--shot kpi-card--clickable">
+            <h3 class="kpi-title">Сфоткано, но не обработано</h3>
+            <div id="kpiShotNotProcessedValue" class="kpi-value">${shotNotProcessedQty}</div>
             <p class="kpi-subtext">товаров</p>
           </div>
         </div>
-        ${qErrorsCount > 0 ? `<p style="font-size: 11px; color: var(--text-secondary); margin-top: 8px; text-align: center;">Задач с ошибкой Q: <strong style="color: #d32f2f;">${qErrorsCount}</strong></p>` : ''}
+        ${qErrorsCount > 0 ? `<p class="tasks-operational-note">Задач с ошибкой Q: <strong>${qErrorsCount}</strong></p>` : ''}
       </div>
       
       <!-- Недельные KPI -->
@@ -2116,7 +2111,7 @@ async function renderTasks() {
       <div class="kpi-card kpi-card--done">
         <h3 class="kpi-title">Сделано</h3>
         <div id="completedCount" class="kpi-value kpi-value--done">${doneQty}</div>
-            <div id="doneStmNonStmMeta" class="kpi-meta kpi-meta--stm-split" style="font-size: 11px; color: var(--text-secondary); margin-top: 2px; justify-content: center;">СТМ: ${doneStmQty} / НЕ СТМ: ${doneNonStmQty}</div>
+            <div id="doneStmNonStmMeta" class="kpi-meta kpi-meta--stm-split">СТМ: ${doneStmQty} / НЕ СТМ: ${doneNonStmQty}</div>
         <div class="kpi-meta kpi-meta--primary">
           <span>Факт</span>
           <strong id="doneFactValue">${doneFact}</strong>
@@ -2160,36 +2155,36 @@ async function renderTasks() {
       </div>
     </div>
     
-    <div style="margin-top: 16px;">
+    <div class="tasks-actions-section">
       <button id="refreshStats" class="btn btn-full">Обновить данные</button>
-      <p class="muted" style="margin-top: 8px; font-size: 11px; line-height: 1.4;">
+      <p class="muted tasks-actions-note">
         Нажмите кнопку для получения актуальной статистики из Asana.
       </p>
     </div>
     
-    <div style="margin-top: 16px;">
+    <div class="tasks-actions-section">
       <button id="showDetails" class="btn btn-full">Показать подробности</button>
     </div>
     
-    <div id="tasksDetailsContainer" class="tasks-details-container ${tasksDetailsExpanded ? 'expanded' : ''}" style="margin-top: 16px;">
-      <div id="tasksDetailsFilters" class="tasks-filters" style="margin-bottom: 12px; padding: 12px; background: var(--bg-muted); border-radius: 8px;">
-        <div class="tasks-filters-row" style="display: flex; flex-direction: column; gap: 12px;">
-          <div class="tasks-filters-mode" style="display: flex; gap: 8px;">
-            <button type="button" class="tasks-filter-mode-btn ${tasksDetailsFilterState.mode === 'operational' ? 'tasks-filter-mode-btn--active' : ''}" data-mode="operational" style="padding: 6px 12px; border: 1px solid var(--border-default); background: ${tasksDetailsFilterState.mode === 'operational' ? 'var(--brand-primary)' : 'var(--bg-surface)'}; color: ${tasksDetailsFilterState.mode === 'operational' ? 'var(--text-inverse)' : 'var(--text-primary)'}; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: ${tasksDetailsFilterState.mode === 'operational' ? '600' : '400'};">Только операционные</button>
-            <button type="button" class="tasks-filter-mode-btn ${tasksDetailsFilterState.mode === 'all' ? 'tasks-filter-mode-btn--active' : ''}" data-mode="all" style="padding: 6px 12px; border: 1px solid var(--border-default); background: ${tasksDetailsFilterState.mode === 'all' ? 'var(--brand-primary)' : 'var(--bg-surface)'}; color: ${tasksDetailsFilterState.mode === 'all' ? 'var(--text-inverse)' : 'var(--text-primary)'}; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: ${tasksDetailsFilterState.mode === 'all' ? '600' : '400'};">Все задачи</button>
+    <div id="tasksDetailsContainer" class="tasks-details-container ${tasksDetailsExpanded ? 'expanded' : ''}">
+      <div id="tasksDetailsFilters" class="tasks-filters">
+        <div class="tasks-filters-row">
+          <div class="tasks-filters-mode">
+            <button type="button" class="tasks-filter-mode-btn ${tasksDetailsFilterState.mode === 'operational' ? 'tasks-filter-mode-btn--active' : ''}" data-mode="operational">Только операционные</button>
+            <button type="button" class="tasks-filter-mode-btn ${tasksDetailsFilterState.mode === 'all' ? 'tasks-filter-mode-btn--active' : ''}" data-mode="all">Все задачи</button>
           </div>
-          <div class="tasks-filters-selects" style="display: flex; gap: 16px; flex-wrap: wrap;">
-            <label class="tasks-filter-label" style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+          <div class="tasks-filters-selects">
+            <label class="tasks-filter-label">
               Тип товара:
-              <select id="tasksFilterType" class="tasks-filter-select" style="padding: 4px 8px; border: 1px solid var(--border-default); border-radius: 4px; font-size: 13px;">
+              <select id="tasksFilterType" class="tasks-filter-select">
                 <option value="all" ${tasksDetailsFilterState.type === 'all' ? 'selected' : ''}>Все</option>
                 <option value="СТМ" ${tasksDetailsFilterState.type === 'СТМ' ? 'selected' : ''}>СТМ</option>
                 <option value="НЕ СТМ" ${tasksDetailsFilterState.type === 'НЕ СТМ' ? 'selected' : ''}>НЕ СТМ</option>
               </select>
             </label>
-            <label class="tasks-filter-label" style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+            <label class="tasks-filter-label">
               Приоритет:
-              <select id="tasksFilterPriority" class="tasks-filter-select" style="padding: 4px 8px; border: 1px solid var(--border-default); border-radius: 4px; font-size: 13px;">
+              <select id="tasksFilterPriority" class="tasks-filter-select">
                 <option value="all" ${tasksDetailsFilterState.priority === 'all' ? 'selected' : ''}>Все</option>
                 <option value="🔥 Срочно" ${tasksDetailsFilterState.priority === '🔥 Срочно' ? 'selected' : ''}>🔥 Срочно</option>
                 <option value="Высокий" ${tasksDetailsFilterState.priority === 'Высокий' ? 'selected' : ''}>Высокий</option>
@@ -2197,14 +2192,14 @@ async function renderTasks() {
               </select>
             </label>
           </div>
-          <div class="tasks-filters-checkboxes" style="display: flex; gap: 16px; flex-wrap: wrap;">
-            <label class="tasks-filter-checkbox" style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+          <div class="tasks-filters-checkboxes">
+            <label class="tasks-filter-checkbox">
               <span>Показать выполненные задачи недели</span>
-              <input type="checkbox" id="tasksFilterShowCompleted" ${tasksDetailsFilterState.showCompleted ? 'checked' : ''} style="cursor: pointer;" />
+              <input type="checkbox" id="tasksFilterShowCompleted" ${tasksDetailsFilterState.showCompleted ? 'checked' : ''} />
             </label>
-            <label class="tasks-filter-checkbox" style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+            <label class="tasks-filter-checkbox">
               <span>Показать только задачи с ошибкой Q</span>
-              <input type="checkbox" id="tasksFilterOnlyQErrors" ${tasksDetailsFilterState.onlyQErrors ? 'checked' : ''} style="cursor: pointer;" />
+              <input type="checkbox" id="tasksFilterOnlyQErrors" ${tasksDetailsFilterState.onlyQErrors ? 'checked' : ''} />
             </label>
           </div>
         </div>
@@ -2261,7 +2256,7 @@ async function renderTasks() {
     } else {
       const detailsList = $('#tasksDetailsList');
       if (detailsList) {
-        detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+        detailsList.innerHTML = '<p class="tasks-details-loading">Загрузка данных...</p>';
       }
     }
   }
@@ -2304,7 +2299,7 @@ async function renderTasks() {
           if (tasksDetailsExpanded) {
             const detailsList = $('#tasksDetailsList');
             if (detailsList) {
-              detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+              detailsList.innerHTML = '<p class="tasks-details-loading">Загрузка данных...</p>';
             }
           }
           
@@ -2346,7 +2341,7 @@ async function renderTasks() {
           // Если данных нет, показываем загрузку и загружаем
           const detailsList = $('#tasksDetailsList');
           if (detailsList) {
-            detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+            detailsList.innerHTML = '<p class="tasks-details-loading">Загрузка данных...</p>';
           }
           
           // Загружаем данные, используя lastAsanaWeekStart
@@ -2354,7 +2349,7 @@ async function renderTasks() {
             console.warn('[TasksTab Details Warning] Невозможно загрузить детали задач: weekStartDate не задан. Сначала обнови статистику Asana.');
             const detailsList = $('#tasksDetailsList');
             if (detailsList) {
-              detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Необходимо сначала обновить статистику Asana</p>';
+              detailsList.innerHTML = '<p class="tasks-details-empty">Необходимо сначала обновить статистику Asana</p>';
             }
             return;
           }
@@ -2433,9 +2428,7 @@ function syncTasksDetailsFiltersUiFromState() {
     const mode = btn.dataset.mode;
     const isActive = mode === tasksDetailsFilterState.mode;
     btn.classList.toggle('tasks-filter-mode-btn--active', isActive);
-    btn.style.background = isActive ? 'var(--brand-primary)' : 'var(--bg-surface)';
-    btn.style.color = isActive ? 'var(--text-inverse)' : 'var(--text-primary)';
-    btn.style.fontWeight = isActive ? '600' : '400';
+    // Стили управляются через CSS-класс .tasks-filter-mode-btn--active
   });
   
   // Синхронизация селекта типа
@@ -2473,25 +2466,21 @@ function updateOperationalCardsVisualState() {
   
   const activeStatus = tasksDetailsFilterState.status;
   
-  // Функция для установки активного состояния карточки
-  function setCardActive(card, isActive) {
-    if (!card) return;
-    if (isActive) {
-      card.style.borderWidth = '2px';
-      card.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
-      card.style.transform = 'scale(1.02)';
-      card.style.transition = 'all 0.2s ease';
-    } else {
-      card.style.borderWidth = '1px';
-      card.style.boxShadow = 'none';
-      card.style.transform = 'scale(1)';
+  // Убираем класс активного состояния со всех карточек
+  [onHandCard, warehouseCard, shotNotProcessedCard].forEach(card => {
+    if (card) {
+      card.classList.remove('kpi-card--active');
     }
-  }
+  });
   
-  // Обновляем состояние всех карточек
-  setCardActive(onHandCard, activeStatus === 'on_hand');
-  setCardActive(warehouseCard, activeStatus === 'warehouse');
-  setCardActive(shotNotProcessedCard, activeStatus === 'shot_not_processed');
+  // Добавляем класс активного состояния нужной карточке
+  if (activeStatus === 'on_hand' && onHandCard) {
+    onHandCard.classList.add('kpi-card--active');
+  } else if (activeStatus === 'warehouse' && warehouseCard) {
+    warehouseCard.classList.add('kpi-card--active');
+  } else if (activeStatus === 'shot_not_processed' && shotNotProcessedCard) {
+    shotNotProcessedCard.classList.add('kpi-card--active');
+  }
 }
 
 /**
@@ -2783,7 +2772,7 @@ async function renderTasksDetails() {
   if (!detailsList) return;
   
   // Показываем загрузку
-  detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Загрузка данных...</p>';
+              detailsList.innerHTML = '<p class="tasks-details-loading">Загрузка данных...</p>';
   
   try {
     const tasks = await getAsanaTasksDetails();
@@ -2796,7 +2785,7 @@ async function renderTasksDetails() {
     console.error('Ошибка отображения деталей задач:', error);
     const detailsList = $('#tasksDetailsList');
     if (detailsList) {
-      detailsList.innerHTML = '<p style="text-align: center; color: var(--error);">Ошибка загрузки данных</p>';
+      detailsList.innerHTML = '<p class="tasks-details-error">Ошибка загрузки данных</p>';
     }
   }
 }
@@ -2866,7 +2855,7 @@ function renderTasksDetailsRow(task, index) {
     
   return `
       <tr class="${rowClassName} ${hasErr ? 'q-error' : ''}">
-        <td class="task-row-cell" data-label="№" style="text-align: center; color: var(--text-secondary); font-size: 12px; width: 40px;">
+        <td class="task-row-cell task-row-cell--number" data-label="№">
           ${index + 1}
         </td>
         <td class="task-row-cell task-row-cell--name" data-label="Задача">
@@ -2985,7 +2974,7 @@ function renderTasksDetailsFromCache() {
   if (!detailsList) return;
   
   if (!cachedTasksDetails || cachedTasksDetails.length === 0) {
-    detailsList.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Нет данных для отображения</p>';
+    detailsList.innerHTML = '<p class="tasks-details-empty">Нет данных для отображения</p>';
     return;
   }
   
@@ -3033,13 +3022,13 @@ function renderTasksDetailsFromCache() {
                           tasksDetailsFilterState.onlyQErrors;
   
   if (hasActiveFilters && filteredTasksCount !== totalTasksCount) {
-    headerHTML += `<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Показано задач: <strong>${filteredTasksCount}</strong> из <strong>${totalTasksCount}</strong></p>`;
+    headerHTML += `<p class="tasks-details-counter">Показано задач: <strong>${filteredTasksCount}</strong> из <strong>${totalTasksCount}</strong></p>`;
   } else {
-    headerHTML += `<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Всего задач: <strong>${filteredTasksCount}</strong></p>`;
+    headerHTML += `<p class="tasks-details-counter">Всего задач: <strong>${filteredTasksCount}</strong></p>`;
   }
   
   if (qErrorsCount > 0) {
-    headerHTML += `<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Задач с ошибкой Q: <strong style="color: #d32f2f;">${qErrorsCount}</strong></p>`;
+    headerHTML += `<p class="tasks-details-q-errors">Задач с ошибкой Q: <strong>${qErrorsCount}</strong></p>`;
   }
 
   // Группируем отфильтрованные задачи по операционному статусу
@@ -3071,7 +3060,7 @@ function renderTasksDetailsFromCache() {
     if (!rows || rows.length === 0) return;
     
     // Добавляем заголовок группы с количеством задач в группе
-    tableHTML += `<tr class="tasks-details-group-row"><td colspan="8" style="font-weight: 600; font-size: 14px; padding: 12px 8px 8px 8px; background: var(--bg-muted); border-top: 2px solid var(--border-default);">${label} <span style="font-weight: 400; color: var(--text-secondary); font-size: 12px;">(${rows.length})</span></td></tr>`;
+    tableHTML += `<tr class="tasks-details-group-row"><td colspan="8">${label} <span class="tasks-details-group-count">(${rows.length})</span></td></tr>`;
     
     // Добавляем строки задач этой группы
     for (const task of rows) {
@@ -3093,7 +3082,7 @@ function renderTasksDetailsFromCache() {
   `;
 
   if (filteredRows.length === 0) {
-    tableHTML += '<p style="text-align: center; color: var(--text-muted); margin-top: 12px;">Нет задач, удовлетворяющих выбранным фильтрам.</p>';
+    tableHTML += '<p class="tasks-details-empty">Нет задач, удовлетворяющих выбранным фильтрам.</p>';
   }
   
   detailsList.innerHTML = tableHTML;
