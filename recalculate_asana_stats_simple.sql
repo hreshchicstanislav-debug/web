@@ -101,8 +101,10 @@ BEGIN
     plan_val := 100;
   END IF;
   
-  -- 5. carry_over_from_prev: переработка с прошлой недели (overtime_qty из asana_stats)
-  SELECT COALESCE(overtime_qty, 0)
+  -- 5. carry_over_from_prev: переработка с прошлой недели (может быть отрицательной, если это долг)
+  -- ВАЖНО: carry_over_from_prev может быть отрицательным (долг), поэтому берем его напрямую, а не overtime_qty
+  -- Если carry_over_from_prev отсутствует, пытаемся взять из overtime_qty (для обратной совместимости)
+  SELECT COALESCE(carry_over_from_prev, overtime_qty, 0)
   INTO carry_over
   FROM asana_stats
   WHERE week_start_date = prev_week_start
@@ -153,8 +155,11 @@ BEGIN
   AND (q IS NULL OR q <= 0);
   
   -- Вычисляем remaining_to_plan и overtime_qty
+  -- ВАЖНО: overtime_qty должен считаться с учетом долга (done_qty), а не просто done_fact
+  -- Если есть долг с прошлой недели, переработка = max(0, (done_fact + carry_over) - plan)
+  -- Это эквивалентно max(0, done_qty - plan)
   remaining_to_plan := GREATEST(0, plan_val - done_fact);
-  overtime_qty := GREATEST(0, done_fact - plan_val);
+  overtime_qty := GREATEST(0, (done_fact + carry_over) - plan_val);
   
   -- Выполняем UPSERT в asana_stats
   INSERT INTO asana_stats (
