@@ -1944,9 +1944,10 @@ async function getAsanaStats() {
 // Функция обновления значений в карточках без пересоздания HTML
 // Принимает объект stats с нормализованными полями (doneQty, toShootQty, weekLoad, plan, remainingToPlan)
 function updateTasksCards(stats) {
-  const doneQty = stats.doneQty ?? stats.done_qty ?? 0;
   const doneFact = stats.doneFactThisWeek ?? stats.done_fact_this_week ?? 0;
   const carryOver = stats.carryOverFromPrev ?? stats.carry_over_from_prev ?? 0;
+  // done_qty = done_fact + carry_over (учитывает долг/переработку)
+  const doneQty = stats.doneQty ?? stats.done_qty ?? (doneFact + carryOver);
   const overtimeQty = stats.overtimeQty ?? stats.overtime_qty ?? 0;
   const toShootQty = stats.toShootQty ?? stats.to_shoot_qty ?? 0;
   const weekLoad = stats.weekLoad ?? stats.week_load ?? 0;
@@ -1955,7 +1956,6 @@ function updateTasksCards(stats) {
   // Всегда пересчитываем remaining_to_plan с учетом долга/переработки
   // remaining_to_plan = max(0, plan - done_qty), где done_qty = done_fact + carry_over
   // Это учитывает долг с прошлой недели (отрицательный carry_over) или переработку (положительный)
-  const doneQty = doneFact + carryOver;
   const remainingToPlan = Math.max(plan - doneQty, 0);
   const onHandQty = stats.onHandQty ?? stats.on_hand_qty ?? 0;
   const warehouseQty = stats.warehouseQty ?? stats.warehouse_qty ?? 0;
@@ -2061,6 +2061,7 @@ async function renderTasks() {
   const doneFact = stats.doneFactThisWeek ?? stats.done_fact_this_week ?? 0;
   const carryOver = stats.carryOverFromPrev ?? stats.carry_over_from_prev ?? 0;
   const overtimeQty = stats.overtimeQty ?? stats.overtime_qty ?? 0;
+  // done_qty = done_fact + carry_over (учитывает долг/переработку)
   const doneQty = stats.doneQty ?? stats.done_qty ?? (doneFact + carryOver);
   const toShootQty = stats.toShootQty ?? stats.to_shoot_qty ?? 0;
   // План всегда статичен и равен 80 товаров в неделю (см. docs/tasks-backend-new-kpi-spec.md)
@@ -2069,7 +2070,6 @@ async function renderTasks() {
   // Всегда пересчитываем remaining_to_plan с учетом долга/переработки
   // remaining_to_plan = max(0, plan - done_qty), где done_qty = done_fact + carry_over
   // Это учитывает долг с прошлой недели (отрицательный carry_over) или переработку (положительный)
-  const doneQty = doneFact + carryOver;
   const remainingToPlan = Math.max(plan - doneQty, 0);
   const onHandQty = stats.onHandQty ?? stats.on_hand_qty ?? 0;
   const warehouseQty = stats.warehouseQty ?? stats.warehouse_qty ?? 0;
