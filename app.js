@@ -2040,7 +2040,7 @@ const tasksDetailsFilterState = {
   priority: 'all',     // 'all' | '🔥 Срочно' | 'Высокий' | 'Средний'
   showCompleted: false,
   onlyQErrors: false,
-  status: 'all',       // 'all' | 'on_hand' | 'warehouse' | 'shot_not_processed' | 'completed' | 'other'
+  status: 'all',       // 'all' | 'on_hand' | 'warehouse' | 'shot_not_processed' | 'accumulatedShotNotProcessed' | 'completed' | 'other'
 };
 
 async function renderTasks() {
@@ -2429,7 +2429,9 @@ function setupTasksOperationalKpiInteractions() {
   if (shotNotProcessedCard) {
     shotNotProcessedCard.style.cursor = 'pointer';
     shotNotProcessedCard.addEventListener('click', () => {
-      setTasksDetailsStatusFilter('shot_not_processed');
+      // Карточка "Сфоткано, но не обработано (накопительный долг)" использует отдельный фильтр
+      // для накопительного долга (задачи с due_on НЕ в текущей неделе)
+      setTasksDetailsStatusFilter('accumulatedShotNotProcessed');
       expandTasksDetailsSectionIfCollapsed();
     });
   }
@@ -2476,6 +2478,7 @@ function syncTasksDetailsFiltersUiFromState() {
 
 /**
  * Обновляет визуальное состояние операционных карточек в зависимости от активного статуса
+ * Поддерживает как операционные карточки (on_hand, warehouse), так и накопительный долг (accumulatedShotNotProcessed)
  */
 function updateOperationalCardsVisualState() {
   const onHandCard = $('#kpiOnHandCard');
@@ -2497,6 +2500,10 @@ function updateOperationalCardsVisualState() {
   } else if (activeStatus === 'warehouse' && warehouseCard) {
     warehouseCard.classList.add('kpi-card--active');
   } else if (activeStatus === 'shot_not_processed' && shotNotProcessedCard) {
+    // Старый статус для обратной совместимости (если где-то используется)
+    shotNotProcessedCard.classList.add('kpi-card--active');
+  } else if (activeStatus === 'accumulatedShotNotProcessed' && shotNotProcessedCard) {
+    // Накопительный долг: карточка "Сфоткано, но не обработано (накопительный долг)"
     shotNotProcessedCard.classList.add('kpi-card--active');
   }
 }
@@ -2504,11 +2511,16 @@ function updateOperationalCardsVisualState() {
 /**
  * Устанавливает фильтр по операционному статусу из кликов по верхним операционным карточкам
  * Связывает верхние операционные карточки с режимом «Показать подробности»
- * @param {string} nextStatus - статус для фильтрации: 'on_hand' | 'warehouse' | 'shot_not_processed' | 'all'
+ * @param {string} nextStatus - статус для фильтрации: 'on_hand' | 'warehouse' | 'shot_not_processed' | 'accumulatedShotNotProcessed' | 'all'
  */
 function setTasksDetailsStatusFilter(nextStatus) {
-  // Всегда переключаем в режим 'operational', когда кликаем по верхним операционным карточкам
-  tasksDetailsFilterState.mode = 'operational';
+  // Для накопительного долга используем режим 'all', так как это не операционный показатель текущей недели
+  // Для остальных карточек используем режим 'operational'
+  if (nextStatus === 'accumulatedShotNotProcessed') {
+    tasksDetailsFilterState.mode = 'all';
+  } else {
+    tasksDetailsFilterState.mode = 'operational';
+  }
   tasksDetailsFilterState.status = nextStatus;
   
   // При клике по карточке сбрасываем тип/приоритет в 'all', чтобы не было неожиданных комбинаций
@@ -2662,6 +2674,9 @@ function computeOperationalStatus(task) {
   }
 
   // "Сфоткано, но не обработано": уже есть снимки, но нет обработки, задача не завершена
+  // Примечание: это общий статус для задач с shot_at и без processed_at.
+  // Для разделения на операционный показатель и накопительный долг используется фильтр
+  // 'accumulatedShotNotProcessed' в applyTasksDetailsFilters() на основе due_on.
   if (!completed && !!shotAt && !processedAt) {
     return 'shot_not_processed';
   }
@@ -2928,6 +2943,42 @@ function renderTasksDetailsRow(task, index) {
 }
 
 /**
+ * Вычисляет начало и конец текущей недели (понедельник-воскресенье)
+ * Используется для фильтрации накопительного долга (due_on НЕ в текущей неделе)
+ * @returns {Object} - { weekStart: Date, weekEnd: Date }
+ */
+function getCurrentWeekBounds() {
+  const today = new Date();
+  // Получаем понедельник текущей недели
+  const dayOfWeek = today.getDay(); // 0 = воскресенье, 1 = понедельник, ...
+  const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Если воскресенье, откатываемся на 6 дней назад
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() + diff);
+  weekStart.setHours(0, 0, 0, 0);
+  
+  // Воскресенье текущей недели
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  weekEnd.setHours(23, 59, 59, 999);
+  
+  return { weekStart, weekEnd };
+}
+
+/**
+ * Проверяет, попадает ли дата в текущую неделю
+ * @param {string|null} dateStr - дата в формате 'YYYY-MM-DD' или null
+ * @returns {boolean} - true, если дата в текущей неделе; false, если дата вне недели или null
+ * Примечание: null считается как "не в текущей неделе" (для накопительного долга)
+ */
+function isDateInCurrentWeek(dateStr) {
+  if (!dateStr) return false; // null или пустая строка = не в текущей неделе
+  const { weekStart, weekEnd } = getCurrentWeekBounds();
+  const date = new Date(dateStr);
+  date.setHours(0, 0, 0, 0);
+  return date >= weekStart && date <= weekEnd;
+}
+
+/**
  * Применяет фильтры к списку задач на основе состояния tasksDetailsFilterState
  * @param {Array} rawRows - массив задач из кеша
  * @returns {Array} - отфильтрованный массив задач
@@ -2976,9 +3027,29 @@ function applyTasksDetailsFilters(rawRows) {
 
     // 6) Фильтр по операционному статусу (для кликов по верхним карточкам)
     if (status !== 'all') {
-      const op = task.operationalStatus;
-      if (op !== status) {
-        return false;
+      if (status === 'accumulatedShotNotProcessed') {
+        // Фильтр для накопительного долга "Сфоткано, но не обработано (накопительный долг)"
+        // Условия из docs/tasks-backend-new-kpi-spec.md:
+        // 1) shot_at IS NOT NULL
+        // 2) processed_at IS NULL
+        // 3) completed != true
+        // 4) q > 0
+        // 5) due_on НЕ в текущей неделе (или due_on IS NULL)
+        const hasShotAt = !!task.shot_at;
+        const hasNoProcessedAt = !task.processed_at;
+        const isNotCompleted = !task.completed;
+        const hasValidQ = task.q != null && task.q > 0;
+        const dueOnNotInCurrentWeek = !isDateInCurrentWeek(task.due_on);
+        
+        if (!(hasShotAt && hasNoProcessedAt && isNotCompleted && hasValidQ && dueOnNotInCurrentWeek)) {
+          return false;
+        }
+      } else {
+        // Обычный фильтр по операционному статусу
+        const op = task.operationalStatus;
+        if (op !== status) {
+          return false;
+        }
       }
     }
 
