@@ -1840,17 +1840,19 @@ function getEmptyAsanaStats() {
 // Вкладка "Задачи" (Tasks Tab) - Логика работы с Asana статистикой
 // ============================================================================
 // 
-// Модель данных (v2-tasks-kpi-неделя-по-fact):
-// - Все KPI рассчитываются на основе фактических дат съёмки (week_shot) и обработки (week_processed)
-// - Неделя определяется по week_shot и week_processed, а не по плановой дате (due_on/week_start_date)
+// Модель данных (v3.2-tasks-kpi-new-kpi-logic):
+// - Фактические KPI (done_fact_this_week) рассчитываются по фактическим датам (week_shot, week_processed, completed_at)
+// - Плановые KPI (to_shoot_qty, on_hand_qty, warehouse_qty) рассчитываются по due_on (дедлайн задачи)
+// - to_shoot_qty теперь означает "Обработать на этой неделе": задачи с due_on в текущей неделе, processed_at IS NULL
+// - shot_not_processed_qty теперь накопительный долг: все задачи, где shot_at IS NOT NULL, processed_at IS NULL, due_on НЕ в текущей неделе
 // - Используется поле q (количество товаров), legacy поле quantity удалено
-// - Поле due_on сохраняется как справочное, но не участвует в расчётах KPI
+// - См. docs/tasks-backend-new-kpi-spec.md для деталей новой модели KPI
 // 
 // Основные функции:
 // - getAsanaStats(): получает статистику через Edge Function fetch-asana-stats
 // - updateTasksCards(stats): обновляет карточки KPI на основе нормализованных данных
 // - renderTasks(): рендерит вкладку "Задачи" с карточками и кнопками
-// - getAsanaTasksDetailsByWeekStart(weekStartStr): получает детали задач по неделе (фильтрация по week_shot/week_processed)
+// - getAsanaTasksDetailsByWeekStart(weekStartStr): получает детали задач по неделе (фильтрация по week_shot/week_processed/week_start_date)
 // - renderTasksDetailsFromCache(): отображает таблицу с деталями задач
 // ============================================================================
 
@@ -1949,6 +1951,8 @@ function updateTasksCards(stats) {
   // done_qty = done_fact + carry_over (учитывает долг/переработку)
   const doneQty = stats.doneQty ?? stats.done_qty ?? (doneFact + carryOver);
   const overtimeQty = stats.overtimeQty ?? stats.overtime_qty ?? 0;
+  // to_shoot_qty теперь означает "Обработать на этой неделе" (задачи с due_on в текущей неделе, processed_at IS NULL)
+  // См. docs/tasks-backend-new-kpi-spec.md для деталей новой модели KPI
   const toShootQty = stats.toShootQty ?? stats.to_shoot_qty ?? 0;
   const weekLoad = stats.weekLoad ?? stats.week_load ?? 0;
   // План всегда статичен и равен 80 товаров в неделю (см. docs/tasks-backend-new-kpi-spec.md)
@@ -1959,6 +1963,8 @@ function updateTasksCards(stats) {
   const remainingToPlan = Math.max(plan - doneQty, 0);
   const onHandQty = stats.onHandQty ?? stats.on_hand_qty ?? 0;
   const warehouseQty = stats.warehouseQty ?? stats.warehouse_qty ?? 0;
+  // shot_not_processed_qty теперь означает накопительный долг (все сфотканы, но не обработаны, где due_on НЕ в текущей неделе)
+  // См. docs/tasks-backend-new-kpi-spec.md для деталей новой модели KPI
   const shotNotProcessedQty =
     stats.shotNotProcessedQty ?? stats.shot_not_processed_qty ?? 0;
   const qErrorsCount = stats.qErrorsCount ?? stats.q_errors_count ?? 0;
@@ -1983,6 +1989,7 @@ function updateTasksCards(stats) {
   if (doneStmNonStmMeta) {
     doneStmNonStmMeta.textContent = `СТМ: ${doneStmQty} / НЕ СТМ: ${doneNonStmQty}`;
   }
+  // Обновление карточки "Обработать на этой неделе" (было "Предстоит отснять")
   if (pendingValue) pendingValue.textContent = toShootQty;
   if (planValue) planValue.textContent = plan;
   if (weekLoadValue) weekLoadValue.textContent = weekLoad;
@@ -1998,13 +2005,15 @@ function updateTasksCards(stats) {
     remainingText.textContent = `товаров (план: ${plan})`;
   }
   
-  // Обновление операционных карточек
+  // Обновление операционных карточек (текущая неделя)
   const onHandValueEl = $('#kpiOnHandValue');
   const warehouseValueEl = $('#kpiWarehouseValue');
-  const shotNotProcessedValueEl = $('#kpiShotNotProcessedValue');
   
   if (onHandValueEl) onHandValueEl.textContent = onHandQty;
   if (warehouseValueEl) warehouseValueEl.textContent = warehouseQty;
+  
+  // Обновление накопительного показателя "Сфоткано, но не обработано (накопительный долг)"
+  const shotNotProcessedValueEl = $('#kpiShotNotProcessedValue');
   if (shotNotProcessedValueEl) shotNotProcessedValueEl.textContent = shotNotProcessedQty;
   
   // Обновление подписи для qErrorsCount (если есть)
@@ -2084,7 +2093,7 @@ async function renderTasks() {
     <h1 class="tasks-page-title">Задачи Asana</h1>
     
       <div id="tasksHeader">
-      <!-- Операционный блок: три карточки -->
+      <!-- Операционный блок: две карточки (текущая неделя) -->
       <div id="tasksOperationalKpi" class="tasks-kpi-section tasks-kpi-section--operational">
         <div class="kpi-grid tasks-kpi-grid-operational">
           <div id="kpiOnHandCard" class="kpi-card kpi-card--onhand kpi-card--clickable">
@@ -2096,12 +2105,6 @@ async function renderTasks() {
           <div id="kpiWarehouseCard" class="kpi-card kpi-card--warehouse kpi-card--clickable">
             <h3 class="kpi-title">Нужно взять со склада</h3>
             <div id="kpiWarehouseValue" class="kpi-value">${warehouseQty}</div>
-            <p class="kpi-subtext">товаров</p>
-          </div>
-          
-          <div id="kpiShotNotProcessedCard" class="kpi-card kpi-card--shot kpi-card--clickable">
-            <h3 class="kpi-title">Сфоткано, но не обработано</h3>
-            <div id="kpiShotNotProcessedValue" class="kpi-value">${shotNotProcessedQty}</div>
             <p class="kpi-subtext">товаров</p>
           </div>
         </div>
@@ -2136,7 +2139,7 @@ async function renderTasks() {
       </div>
           
           <div class="kpi-card kpi-card--pending">
-            <h3 class="kpi-title">Предстоит отснять</h3>
+            <h3 class="kpi-title">Обработать на этой неделе</h3>
             <div id="pendingCount" class="kpi-value kpi-value--pending">${toShootQty}</div>
             <p class="kpi-subtext">товаров</p>
       </div>
@@ -2167,6 +2170,18 @@ async function renderTasks() {
     
     <div class="tasks-actions-section">
       <button id="showDetails" class="btn btn-full">Показать подробности</button>
+    </div>
+    
+    <!-- Накопительные показатели -->
+    <div id="tasksAccumulatedKpi" class="tasks-kpi-section tasks-kpi-section--accumulated">
+      <h2 class="tasks-section-title">Накопительные показатели</h2>
+      <div class="kpi-grid tasks-kpi-grid-accumulated">
+        <div id="kpiShotNotProcessedCard" class="kpi-card kpi-card--shot kpi-card--clickable">
+          <h3 class="kpi-title">Сфоткано, но не обработано (накопительный долг)</h3>
+          <div id="kpiShotNotProcessedValue" class="kpi-value">${shotNotProcessedQty}</div>
+          <p class="kpi-subtext">товаров</p>
+        </div>
+      </div>
     </div>
     
     <div id="tasksDetailsContainer" class="tasks-details-container ${tasksDetailsExpanded ? 'expanded' : ''}">

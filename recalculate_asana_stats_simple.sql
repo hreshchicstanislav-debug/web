@@ -80,12 +80,17 @@ BEGIN
   FROM fact_tasks
   WHERE fact_week = week_start_val;
   
-  -- 2. to_shoot_qty: сумма q для задач, где due_on в текущей неделе, q > 0, completed != true
+  -- 2. to_shoot_qty: "Обработать на этой неделе" (новая логика v3.2)
+  -- Сумма q для задач, где due_on в текущей неделе, processed_at IS NULL, q > 0, completed != true
+  -- Новая семантика: показывает задачи текущей недели, которые нужно обработать (не обработанные)
+  -- Исключает задачи, которые уже обработаны (даже если не закрыты)
+  -- См. docs/tasks-backend-new-kpi-spec.md для деталей новой модели KPI
   SELECT COALESCE(SUM(q), 0)
   INTO to_shoot
   FROM asana_tasks
   WHERE due_on >= week_start_val 
     AND due_on <= week_end_val
+    AND processed_at IS NULL
     AND q > 0
     AND completed != true;
   
@@ -134,15 +139,25 @@ BEGIN
     AND due_on <= week_end_val
     AND q > 0;
   
-  -- 8. shot_not_processed_qty: сумма q для задач, где shot_at заполнено, processed_at IS NULL, completed != true, week_shot = текущая неделя
+  -- 8. shot_not_processed_qty: "Сфоткано, но не обработано (накопительный долг)" (новая логика v3.2)
+  -- Сумма q для задач, где shot_at IS NOT NULL, processed_at IS NULL, completed != true, q > 0,
+  -- И due_on НЕ попадает в текущую неделю (due_on < week_start_val OR due_on > week_end_val OR due_on IS NULL)
+  -- Новая семантика: накопительный долг по обработке за все время, независимо от недели съёмки
+  -- Показывает все задачи, которые сфотканы, но не обработаны, и дедлайн НЕ в текущей неделе
+  -- Это исключает дублирование с "Обработать на этой неделе" (to_shoot_qty)
+  -- См. docs/tasks-backend-new-kpi-spec.md для деталей новой модели KPI
   SELECT COALESCE(SUM(q), 0)
   INTO shot_not_processed
   FROM asana_tasks
   WHERE shot_at IS NOT NULL
     AND processed_at IS NULL
     AND completed != true
-    AND week_shot = week_start_val
-    AND q > 0;
+    AND q > 0
+    AND (
+      due_on < week_start_val 
+      OR due_on > week_end_val
+      OR due_on IS NULL
+    );
   
   -- 9. q_errors_count: количество задач недели, где q IS NULL или q <= 0
   SELECT COUNT(DISTINCT asana_task_gid)
