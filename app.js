@@ -2518,6 +2518,31 @@ function setTasksDetailsStatusFilter(nextStatus) {
   // Для остальных карточек используем режим 'operational'
   if (nextStatus === 'accumulatedShotNotProcessed') {
     tasksDetailsFilterState.mode = 'all';
+    tasksDetailsFilterState.status = nextStatus;
+    // При переключении на накопительный долг нужно перезагрузить данные
+    // (загружаем все задачи накопительного долга, а не только текущей недели)
+    const detailsList = $('#tasksDetailsList');
+    if (detailsList) {
+      detailsList.innerHTML = '<p class="tasks-details-loading">Загрузка данных накопительного долга...</p>';
+    }
+    getAccumulatedShotNotProcessedTasks().then(tasks => {
+      cachedTasksDetails = tasks;
+      // При клике по карточке сбрасываем тип/приоритет в 'all', чтобы не было неожиданных комбинаций
+      tasksDetailsFilterState.type = 'all';
+      tasksDetailsFilterState.priority = 'all';
+      // По умолчанию завершённые задачи при операционном фокусе скрываем
+      tasksDetailsFilterState.showCompleted = false;
+      updateOperationalCardsVisualState();
+      syncTasksDetailsFiltersUiFromState();
+      renderTasksDetailsFromCache();
+    }).catch(error => {
+      console.error('[[TasksTab Details Error]] Ошибка загрузки задач накопительного долга:', error);
+      const detailsList = $('#tasksDetailsList');
+      if (detailsList) {
+        detailsList.innerHTML = '<p class="tasks-details-empty">Ошибка загрузки данных</p>';
+      }
+    });
+    return; // Выходим раньше, так как загрузка асинхронная
   } else {
     tasksDetailsFilterState.mode = 'operational';
   }
@@ -2556,16 +2581,36 @@ function expandTasksDetailsSectionIfCollapsed() {
     detailsContainer.classList.add('expanded');
     showDetailsBtn.textContent = 'Скрыть подробности';
     
-    // Если данных нет в кеше, загружаем их
-    if (!cachedTasksDetails || cachedTasksDetails.length === 0) {
-      const weekStart = lastAsanaWeekStart;
-      if (weekStart) {
-        getAsanaTasksDetailsByWeekStart(weekStart).then(tasks => {
-          cachedTasksDetails = tasks;
-          renderTasksDetailsFromCache();
-        }).catch(error => {
-          console.error('[[TasksTab Details Error]] Ошибка загрузки детальных данных:', error);
-        });
+    // Если активен фильтр накопительного долга, загружаем все задачи накопительного долга
+    // Иначе загружаем задачи текущей недели
+    if (tasksDetailsFilterState.status === 'accumulatedShotNotProcessed') {
+      // Загружаем все задачи накопительного долга (без фильтрации по неделе)
+      const detailsList = $('#tasksDetailsList');
+      if (detailsList) {
+        detailsList.innerHTML = '<p class="tasks-details-loading">Загрузка данных накопительного долга...</p>';
+      }
+      getAccumulatedShotNotProcessedTasks().then(tasks => {
+        cachedTasksDetails = tasks;
+        renderTasksDetailsFromCache();
+      }).catch(error => {
+        console.error('[[TasksTab Details Error]] Ошибка загрузки задач накопительного долга:', error);
+        const detailsList = $('#tasksDetailsList');
+        if (detailsList) {
+          detailsList.innerHTML = '<p class="tasks-details-empty">Ошибка загрузки данных</p>';
+        }
+      });
+    } else {
+      // Если данных нет в кеше, загружаем задачи текущей недели
+      if (!cachedTasksDetails || cachedTasksDetails.length === 0) {
+        const weekStart = lastAsanaWeekStart;
+        if (weekStart) {
+          getAsanaTasksDetailsByWeekStart(weekStart).then(tasks => {
+            cachedTasksDetails = tasks;
+            renderTasksDetailsFromCache();
+          }).catch(error => {
+            console.error('[[TasksTab Details Error]] Ошибка загрузки детальных данных:', error);
+          });
+        }
       }
     }
   }
@@ -2688,6 +2733,67 @@ function computeOperationalStatus(task) {
 
   // Всё остальное
   return 'other';
+}
+
+/**
+ * Загружает все задачи накопительного долга "Сфоткано, но не обработано (накопительный долг)"
+ * Без фильтрации по неделе - загружает все задачи, соответствующие условиям накопительного долга
+ * @returns {Promise<Array>} - массив задач накопительного долга
+ */
+async function getAccumulatedShotNotProcessedTasks() {
+  try {
+    if (!supabaseClient) {
+      console.error('[[TasksTab Details Error]] Supabase клиент не инициализирован');
+      return [];
+    }
+    
+    // Вычисляем границы текущей недели для проверки due_on
+    const { weekStart, weekEnd } = getCurrentWeekBounds();
+    const weekStartStr = weekStart.toISOString().split('T')[0]; // YYYY-MM-DD
+    const weekEndStr = weekEnd.toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    console.log('[TasksTab Details Debug] getAccumulatedShotNotProcessedTasks: текущая неделя', weekStartStr, '-', weekEndStr);
+    
+    // Загружаем все задачи, которые соответствуют условиям накопительного долга:
+    // 1) shot_at IS NOT NULL
+    // 2) processed_at IS NULL
+    // 3) completed != true
+    // 4) q > 0
+    // 5) due_on НЕ в текущей неделе (или due_on IS NULL)
+    const { data: rows, error } = await supabaseClient
+      .from('asana_tasks')
+      .select('task_name, q, product_source, shot_at, processed_at, completed_at, due_on, week_start_date, completed, project_gid, assignee_gid, task_type_label, task_type_gid, priority_label, priority_gid')
+      .not('shot_at', 'is', null)
+      .is('processed_at', null)
+      .eq('completed', false)
+      .gt('q', 0)
+      .or(`due_on.lt.${weekStartStr},due_on.gt.${weekEndStr},due_on.is.null`)
+      .order('shot_at', { ascending: false })
+      .order('due_on', { ascending: true });
+    
+    if (error && error.code !== 'PGRST116') {
+      console.error('[[TasksTab Details Error]] Ошибка получения задач накопительного долга:', error);
+      throw error;
+    }
+    
+    const safeRows = rows || [];
+    const distinctProjects = Array.from(new Set(safeRows.map(r => r.project_gid).filter(Boolean)));
+    const distinctAssignees = Array.from(new Set(safeRows.map(r => r.assignee_gid).filter(Boolean)));
+
+    // Вычисляем hasQError и operationalStatus для каждой строки
+    const enrichedRows = safeRows.map(row => ({
+      ...row,
+      hasQError: row.q == null || row.q <= 0,
+      operationalStatus: computeOperationalStatus(row),
+    }));
+
+    console.log('[TasksTab Details Debug] getAccumulatedShotNotProcessedTasks: загружено задач', enrichedRows.length);
+    
+    return enrichedRows;
+  } catch (error) {
+    console.error('[[TasksTab Details Error]] Ошибка в getAccumulatedShotNotProcessedTasks:', error);
+    return [];
+  }
 }
 
 // Функция для получения детальных данных о задачах по неделе
