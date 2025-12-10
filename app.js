@@ -1909,9 +1909,10 @@ async function getAsanaStats() {
       doneStmQty,
       doneNonStmQty,
       toShootQty: data.to_shoot_qty ?? 0,
-      // Всегда пересчитываем remaining_to_plan на фронтенде, так как план всегда 80
-      // Игнорируем значение с бэкенда, так как там может быть динамический план
-      remainingToPlan: Math.max(80 - doneFactThisWeek, 0), // План всегда 80
+      // Всегда пересчитываем remaining_to_plan на фронтенде с учетом долга/переработки
+      // remaining_to_plan = max(0, plan - done_qty), где done_qty = done_fact_this_week + carry_over_from_prev
+      // Это учитывает долг с прошлой недели (отрицательный carry_over) или переработку (положительный)
+      remainingToPlan: Math.max(80 - doneQty, 0), // План всегда 80, учитываем долг/переработку
       onHandQty: data.on_hand_qty ?? 0,
       warehouseQty: data.warehouse_qty ?? 0,
       shotNotProcessedQty: data.shot_not_processed_qty ?? 0,
@@ -1951,9 +1952,11 @@ function updateTasksCards(stats) {
   const weekLoad = stats.weekLoad ?? stats.week_load ?? 0;
   // План всегда статичен и равен 80 товаров в неделю (см. docs/tasks-backend-new-kpi-spec.md)
   const plan = 80;
-  // Всегда пересчитываем remaining_to_plan на основе плана и факта
-  // Игнорируем значение из stats, так как оно может быть рассчитано с динамическим планом
-  const remainingToPlan = Math.max(plan - doneFact, 0);
+  // Всегда пересчитываем remaining_to_plan с учетом долга/переработки
+  // remaining_to_plan = max(0, plan - done_qty), где done_qty = done_fact + carry_over
+  // Это учитывает долг с прошлой недели (отрицательный carry_over) или переработку (положительный)
+  const doneQty = doneFact + carryOver;
+  const remainingToPlan = Math.max(plan - doneQty, 0);
   const onHandQty = stats.onHandQty ?? stats.on_hand_qty ?? 0;
   const warehouseQty = stats.warehouseQty ?? stats.warehouse_qty ?? 0;
   const shotNotProcessedQty =
@@ -2063,9 +2066,11 @@ async function renderTasks() {
   // План всегда статичен и равен 80 товаров в неделю (см. docs/tasks-backend-new-kpi-spec.md)
   const plan = 80;
   const weekLoad = stats.weekLoad ?? stats.week_load ?? doneFact + toShootQty;
-  // Всегда пересчитываем remaining_to_plan на основе плана и факта
-  // Игнорируем значение из stats, так как оно может быть рассчитано с динамическим планом
-  const remainingToPlan = Math.max(plan - doneFact, 0);
+  // Всегда пересчитываем remaining_to_plan с учетом долга/переработки
+  // remaining_to_plan = max(0, plan - done_qty), где done_qty = done_fact + carry_over
+  // Это учитывает долг с прошлой недели (отрицательный carry_over) или переработку (положительный)
+  const doneQty = doneFact + carryOver;
+  const remainingToPlan = Math.max(plan - doneQty, 0);
   const onHandQty = stats.onHandQty ?? stats.on_hand_qty ?? 0;
   const warehouseQty = stats.warehouseQty ?? stats.warehouse_qty ?? 0;
   const shotNotProcessedQty =
